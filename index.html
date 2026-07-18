@@ -1,0 +1,1498 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Treasure Hunt — Single Player</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<link rel="stylesheet" href="game-v2.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Nunito',sans-serif;background:radial-gradient(circle at top,#1e2640 0%,#0d111b 100%);color:#e0e0e0;height:100vh;overflow:hidden}
+.screen{display:none!important}
+.screen.active{display:flex!important}
+
+/* ===== ANIMATIONS ===== */
+@keyframes char-idle{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes char-walk{0%,100%{transform:translateY(0) rotate(0)}25%{transform:translateY(-2px) rotate(-3deg)}75%{transform:translateY(-2px) rotate(3deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 8px rgba(139,92,246,.3)}50%{box-shadow:0 0 20px rgba(139,92,246,.5)}}
+@keyframes crate-glow{0%,100%{filter:drop-shadow(0 0 4px rgba(239,68,68,0.4)) drop-shadow(0 4px 6px rgba(0,0,0,0.4))}50%{filter:drop-shadow(0 0 12px rgba(239,68,68,0.8)) drop-shadow(0 4px 6px rgba(0,0,0,0.4))}}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-20px)}}
+
+.anim-idle{animation:char-idle 1s infinite}
+.anim-walk{animation:char-walk .3s ease}
+.anim-fade{animation:fadeIn .3s ease forwards}
+.anim-glow{animation:pulse-glow 2s infinite}
+.anim-crate{animation:crate-glow 2s infinite ease-in-out}
+.animate-bounce{animation:bounce 1s ease-in-out infinite}
+
+/* ===== BOARD ===== */
+#boardViewport{width:100%;max-width:100%;aspect-ratio:1;overflow:hidden;border-radius:16px;position:relative;background:#5c3d21;border:3px solid #3a2405;box-shadow:0 15px 35px rgba(0,0,0,0.5),inset 0 0 20px rgba(0,0,0,0.3);touch-action:none}
+#boardGrid{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);gap:2px;padding:2px;width:100%;height:100%}
+
+/* ===== CELLS ===== */
+.cell{border-radius:4px;display:flex;align-items:center;justify-content:center;position:relative;font-size:clamp(1.2rem,6vw,3rem);transition:all .2s ease}
+.cell-empty{background:linear-gradient(135deg,#1c263f,#151d32);border:1px solid rgba(255,255,255,0.02)}
+.cell-even{background:#f0d9b5;border:1px solid rgba(0,0,0,0.08)}
+.cell-odd{background:#b58863;border:1px solid rgba(0,0,0,0.08)}
+.cell-start{background:linear-gradient(135deg,#064e3b,#065f46);border:2px solid #10b981;box-shadow:inset 0 0 15px rgba(16,185,129,0.3)}
+.cell-finish{background:linear-gradient(135deg,#78350f,#92400e);border:2px solid #fbbf24;box-shadow:inset 0 0 15px rgba(251,191,36,0.3);display:flex;align-items:center;justify-content:center}
+.cell-wall{border:1px solid rgba(0,0,0,0.08);display:flex;align-items:center;justify-content:center}
+.cell-q{border:1px solid rgba(139,92,246,0.25);box-shadow:0 0 8px rgba(139,92,246,0.15);display:flex;align-items:center;justify-content:center}
+.cell-player{z-index:5}
+.cell svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,0.25))}
+
+/* ===== TOAST ===== */
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(15,22,38,.95);backdrop-filter:blur(16px);color:#e0e0e0;padding:12px 28px;border-radius:30px;font-size:.9rem;font-weight:700;border:1.5px solid #2f3e5f;box-shadow:0 10px 30px rgba(0,0,0,.5);transition:opacity .3s,transform .3s;opacity:0;pointer-events:none;white-space:nowrap}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ===== LOG ===== */
+.log-entry{padding:6px 12px;border-radius:8px;margin-bottom:6px;font-size:.8rem;animation:fadeIn .2s ease;font-weight:600}
+.log-good{background:rgba(16,185,129,.1);border-left:4px solid #10b981;color:#10b981}
+.log-bad{background:rgba(239,68,68,.1);border-left:4px solid #ef4444;color:#ef4444}
+.log-info{background:rgba(245,158,11,.08);border-left:4px solid #f59e0b;color:#f59e0b}
+.log-power{background:rgba(139,92,246,.1);border-left:4px solid #8b5cf6;color:#a78bfa}
+
+/* ===== UI ===== */
+.progress-bar{height:10px;border-radius:5px;background:#1e293b;overflow:hidden}
+.progress-fill{height:100%;border-radius:5px;transition:width .5s ease}
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(8,11,21,.75);backdrop-filter:blur(6px);z-index:100;align-items:center;justify-content:center;padding:16px}
+.modal-overlay.active{display:flex}
+.modal-box{background:linear-gradient(135deg,#1f273d,#141a29);border-radius:24px;padding:28px;max-width:400px;width:100%;border:2px solid #2d3c5e;box-shadow:0 20px 40px rgba(0,0,0,.6);max-height:90vh;overflow-y:auto}
+
+/* ===== GLASS ===== */
+.bg-gray-800\/60{background:rgba(22,30,49,0.5)!important;backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.05)!important;box-shadow:0 8px 32px 0 rgba(0,0,0,0.3)}
+
+/* ===== TOUCH ===== */
+button{transition:all .25s cubic-bezier(0.4,0,0.2,1)!important}
+button:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.35)}
+button:active{transform:translateY(1px)}
+input[type="text"]{transition:all .2s ease}
+input[type="text"]:focus{box-shadow:0 0 10px rgba(245,158,11,.25);border-color:#fbbf24!important}
+input[type="password"]{transition:all .2s ease}
+input[type="password"]:focus{box-shadow:0 0 10px rgba(245,158,11,.25);border-color:#fbbf24!important}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:rgba(0,0,0,0.2);border-radius:10px}
+::-webkit-scrollbar-thumb{background:rgba(139,92,246,0.4);border-radius:10px}
+::-webkit-scrollbar-thumb:hover{background:rgba(139,92,246,0.6)}
+
+@media(max-width:480px){#boardViewport{border-radius:8px;border-width:2px}.cell{font-size:clamp(1rem,5vw,2rem);border-radius:3px}}
+@media(min-width:768px){#boardViewport{max-width:700px}}
+</style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<!-- ===== LANDING PAGE (new - default screen) ===== -->
+<div id="landing-screen" class="screen active flex flex-col min-h-screen p-4">
+  <!-- Header -->
+  <div class="text-center mb-6 mt-4">
+    <div class="text-5xl mb-2">🗺️</div>
+    <h1 class="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-yellow-300 to-yellow-500 mb-2">Treasure Hunt</h1>
+    <p class="text-gray-400 text-sm max-w-md mx-auto">Truy tìm kho báu trên bàn cờ 8x8, trả lời câu hỏi để mở đường. Thách thức trí tuệ và leo rank toàn cầu!</p>
+  </div>
+
+  <!-- Live Ranking on Landing -->
+  <div class="flex-1 overflow-y-auto">
+    <h2 class="text-lg font-bold text-yellow-400 mb-3 text-center">🏆 Bảng xếp hạng Realtime</h2>
+    
+    <div class="text-center my-6">
+      <button class="flex items-center gap-2 mx-auto bg-yellow-400/10 hover:bg-yellow-400/20 border border-yellow-500/30 rounded-full px-5 py-2.5 transition text-yellow-400 font-bold" onclick="openRankingFromLanding()">
+        🏆 Xem bảng xếp hạng
+      </button>
+    </div>
+  </div>
+
+  <!-- Play Button -->
+  <div class="text-center pb-4">
+    <button class="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-black py-4 px-10 rounded-2xl text-xl transition shadow-lg" onclick="openPlayModal()">
+      🎮 Chơi ngay
+    </button>
+  </div>
+</div>
+
+<!-- ===== PLAY NAME INPUT MODAL (new) ===== -->
+<div class="modal-overlay" id="playModal" onclick="if(event.target===this)closePlayModal()">
+  <div class="modal-box text-center">
+    <h3 class="text-yellow-400 font-bold text-lg mb-2">👋 Chào mừng!</h3>
+    <p class="text-gray-400 text-sm mb-4">Nhập tên của bạn để bắt đầu chơi</p>
+    <input type="text" id="playNameInput" placeholder="Tên của bạn..." maxlength="20" class="bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-center text-gray-300 outline-none focus:border-yellow-400 w-full mb-2 text-base" onkeydown="if(event.key==='Enter')document.getElementById('playPassInput').focus()">
+    <input type="password" id="playPassInput" placeholder="Mật khẩu..." maxlength="50" class="bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-center text-gray-300 outline-none focus:border-yellow-400 w-full mb-2 text-base" onkeydown="if(event.key==='Enter')submitPlayName()">
+    <div id="playNameError" class="text-red-400 text-xs mb-3 hidden"></div>
+    <div class="flex gap-2">
+      <button class="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-sm py-2.5 rounded-lg transition" onclick="closePlayModal()">✕ Hủy</button>
+      <button class="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold text-sm py-2.5 rounded-lg transition" onclick="submitPlayName()">🎮 Bắt đầu</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== RESULT SCREEN (new - replaces auto overlay) ===== -->
+<div id="result-screen" class="screen flex flex-col items-center justify-center min-h-screen p-6 text-center">
+  <div class="max-w-md w-full">
+    <!-- Trophy animation -->
+    <div class="text-8xl mb-4 animate-bounce">🏆</div>
+    
+    <!-- Congratulations -->
+    <h1 class="text-3xl font-black text-yellow-400 mb-2">HOÀN THÀNH!</h1>
+    <p class="text-gray-300 text-base mb-4">Chúc mừng bạn đã chinh phục thành công!</p>
+    
+    <!-- Stats -->
+    <div class="bg-gray-800/60 rounded-2xl p-5 mb-4 space-y-2">
+      <div class="flex justify-between items-center">
+        <span class="text-gray-400 text-sm">Cúp vừa nhận:</span>
+        <span class="text-yellow-400 font-bold text-lg" id="resultCupGained">+1 🏆</span>
+      </div>
+      <div class="flex justify-between items-center">
+        <span class="text-gray-400 text-sm">Tổng số cúp:</span>
+        <span class="text-yellow-300 font-black text-xl" id="resultTotalCups">0</span>
+      </div>
+      <div class="flex justify-between items-center">
+        <span class="text-gray-400 text-sm">Số bước đã đi:</span>
+        <span class="text-gray-300 font-bold" id="resultMoveCount">0</span>
+      </div>
+      <div class="flex justify-between items-center pt-2 border-t border-gray-700">
+        <span class="text-yellow-400 text-sm font-bold">Xếp hạng hiện tại:</span>
+        <span class="text-yellow-300 font-black text-xl" id="resultRank">#-</span>
+      </div>
+    </div>
+    
+    <!-- Actions -->
+    <div class="space-y-2">
+      <button class="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-black py-4 rounded-xl text-lg transition shadow-lg" onclick="playAgain()">
+        🔁 Chơi lại
+      </button>
+      <button class="w-full bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 rounded-xl text-base transition" onclick="openRankingFromResult()">
+        🏆 Xem bảng xếp hạng
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PLAYER SCREEN (main game) ===== -->
+<div id="player-screen" class="screen h-screen flex flex-col">
+  <div class="flex items-center justify-between px-2 py-1 bg-gray-900/80 shrink-0">
+    <div class="flex flex-col items-start gap-0">
+      <div class="flex items-center gap-1.5">
+        <span id="playerNameBadge" class="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-bold">Người chơi</span>
+        <span class="text-xs text-gray-500">Bước: <b id="moveCount" class="text-gray-300">0</b></span>
+      </div>
+      <button class="text-[11px] text-gray-400 hover:text-yellow-400 bg-gray-800/60 hover:bg-gray-700/60 border border-gray-700 rounded-full px-2.5 py-1 transition flex items-center gap-1 mt-1 w-fit" onclick="confirmRename()">← Quay lại</button>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <button id="miniRankBtn" class="flex items-center gap-1 text-xs bg-yellow-400/10 hover:bg-yellow-400/20 border border-yellow-500/30 rounded-full px-2.5 py-1 transition" onclick="showScreen('ranking-screen')">
+        🏆 <b id="cupCount" class="text-yellow-300">0</b> • <span id="miniRankText" class="text-yellow-400">#-</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="flex-1 flex items-center justify-center min-h-0 overflow-hidden">
+    <div class="relative">
+      <div id="boardViewport" class="shadow-xl relative">
+        <div id="boardGrid"></div>
+      </div>
+      <div id="questionMinimized" class="absolute -top-2 -right-2 z-20 hidden cursor-pointer bg-gray-800 border-2 border-yellow-500 rounded-full w-8 h-8 flex items-center justify-center text-base shadow-lg hover:bg-gray-700 transition" onclick="restoreQuestion()">❓</div>
+    </div>
+  </div>
+
+  <!-- (leaderboard moved to #ranking-screen) -->
+
+  <div class="absolute left-2 z-20 hidden md:block" style="bottom:80px;pointer-events:none">
+    <div class="bg-gray-900/85 border border-gray-700 rounded-xl px-3 py-2 text-left shadow-lg backdrop-blur-sm">
+      <div class="text-xs font-bold text-yellow-400 mb-0.5">🎮 Điều khiển</div>
+      <div class="text-[11px] text-gray-400">Di chuyển: ấn nút mũi tên<br>trên bàn phím<br>❓ Ấn ra ngoài: thu nhỏ, ấn lại để mở</div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="playerModal" onclick="if(event.target===this)minimizeQuestion()">
+    <div class="modal-box">
+      <div id="playerModalContent"></div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="backConfirmModal" onclick="if(event.target===this)closeModal('backConfirmModal')">
+    <div class="modal-box"></div>
+  </div>
+</div>
+
+<!-- ===== ROLE SCREEN (backup - not used in new flow) ===== -->
+<div id="role-screen" class="screen flex flex-col items-center justify-center min-h-screen p-6 text-center">
+  <h1 class="text-3xl font-black text-yellow-400 mb-2">🗺️ Treasure Hunt</h1>
+  <p class="text-gray-400 text-sm mb-6">Game truy tìm kho báu — chơi cá nhân, xếp hạng toàn cầu</p>
+  <input type="text" id="playerNameInput" placeholder="Nhập tên của bạn..." maxlength="20" class="bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-center text-gray-300 outline-none focus:border-yellow-400 w-64 mb-4 text-base" onkeydown="if(event.key==='Enter')startPlaying()">
+  <button class="w-56 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold py-3 rounded-xl transition text-lg" onclick="startPlaying()">🎮 Chơi ngay</button>
+  <div id="roleError" class="text-red-400 text-xs mt-3 hidden">⚠️ Vui lòng nhập tên!</div>
+</div>
+
+<!-- ===== RANKING SCREEN (full screen) ===== -->
+<div id="ranking-screen" class="screen flex flex-col min-h-screen p-4">
+  <div class="flex items-center justify-between mb-3">
+    <h1 class="text-xl font-black text-yellow-400">🏆 Bảng xếp hạng</h1>
+    <button id="rankingBackBtn" class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg transition" onclick="backFromRanking()">← Quay lại chơi</button>
+  </div>
+
+  <!-- Podium top 3 -->
+  <div id="podium" class="flex items-end justify-center gap-2 mb-4 h-28"></div>
+
+  <!-- Scrollable ranking list -->
+  <div class="flex-1 overflow-y-auto space-y-1" id="rankingList"></div>
+
+  <!-- My rank fixed at bottom -->
+  <div id="rankingMyRow" class="mt-3 pt-3 border-t border-gray-700 text-sm text-yellow-400 font-bold text-center"></div>
+</div>
+
+<!-- ===== CONFIRM NAME MODAL (legacy - not used) ===== -->
+<div class="modal-overlay hidden" id="confirmNameModal">
+  <div class="modal-box text-center">
+    <h3 class="text-yellow-400 font-bold text-sm mb-3">🔄 Tên đã tồn tại</h3>
+    <p id="confirmNameMsg" class="text-gray-300 text-sm mb-4"></p>
+    <div class="flex gap-2">
+      <button class="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-sm py-2 rounded-lg transition" onclick="rejectExistingName()">✕ Dùng tên khác</button>
+      <button class="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm py-2 rounded-lg transition" onclick="acceptExistingName()">✅ Tiếp tục, khôi phục điểm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========== CONFIG ==========
+const COLS=8,ROWS=8,NUM_QUESTIONS=23,TOTAL_MYSTERY=NUM_QUESTIONS;
+const START={r:0,c:0},FINISH={r:7,c:7};
+const NUM_WALLS=25;
+
+const QUESTIONS=[
+{q:'Thuật ngữ khoa học "kinh tế chính trị" xuất hiện lần đầu tiên vào năm nào?',a:'1615',b:'1776',c:'1818',d:'1867',ans:'A'},
+{q:'Ai là người đầu tiên đề xuất môn khoa học kinh tế chính trị trong tác phẩm "Chuyên luận về kinh tế chính trị"?',a:'Adam Smith',b:'Antoine de Montchrétien',c:'Karl Marx',d:'David Ricardo',ans:'B'},
+{q:'Hệ thống lý luận kinh tế chính trị nào bước đầu nghiên cứu nền sản xuất tư bản chủ nghĩa và cho rằng nguồn gốc lợi nhuận là từ lưu thông?',a:'Chủ nghĩa trọng nông',b:'Chủ nghĩa trọng thương',c:'Kinh tế chính trị cổ điển Anh',d:'Kinh tế học tân cổ điển',ans:'B'},
+{q:'Chủ nghĩa trọng nông hướng việc nghiên cứu kinh tế chính trị vào lĩnh vực nào?',a:'Thương mại quốc tế',b:'Lưu thông phân phối',c:'Sản xuất nông nghiệp',d:'Sản xuất công nghiệp',ans:'C'},
+{q:'Hệ thống lý luận nào trình bày một cách hệ thống các phạm trù giá trị, tiền tệ, tiền lương, lợi nhuận và rút ra kết luận giá trị do hao phí lao động tạo ra?',a:'Chủ nghĩa trọng thương',b:'Chủ nghĩa trọng nông',c:'Kinh tế chính trị cổ điển Anh',d:'Kinh tế chính trị tiểu tư sản',ans:'C'},
+{q:'C. Mác đã kế thừa trực tiếp thành quả lý luận của ai để xây dựng hệ thống lý luận kinh tế chính trị của mình?',a:'Antoine de Montchrétien',b:'William Petty',c:'Adam Smith',d:'David Ricardo',ans:'D'},
+{q:'Tác phẩm nào thể hiện tập trung và cô đọng nhất hệ thống lý luận kinh tế chính trị của C. Mác và Ph. Ăngghen?',a:'Chuyên luận về kinh tế chính trị',b:'Của cải của các quốc gia',c:'Bộ Tư bản',d:'Tuyên ngôn của Đảng Cộng sản',ans:'C'},
+{q:'Bước nhảy vọt về lý luận khoa học của C. Mác so với D. Ricardo trong kinh tế chính trị là việc phát hiện ra điều gì?',a:'Khái niệm hàng hóa',b:'Tính hai mặt của lao động sản xuất hàng hóa',c:'Nguồn gốc của tiền tệ',d:'Quy luật cung cầu',ans:'B'},
+{q:'Người có công lao lớn nhất trong việc kế thừa, bổ sung và phát triển lý luận kinh tế chính trị C. Mác trong giai đoạn CNTB độc quyền là ai?',a:'Ph. Ăngghen',b:'V.I. Lênin',c:'J.M. Keynes',d:'P. Samuelson',ans:'B'},
+{q:'Theo C. Mác và Ph. Ăngghen, đối tượng nghiên cứu của kinh tế chính trị Mác - Lênin là gì?',a:'Yếu tố vật chất của lực lượng sản xuất',b:'Các hiện tượng kinh tế trên bề mặt xã hội',c:'Các quan hệ xã hội của sản xuất và trao đổi',d:'Biểu hiện kỹ thuật của quá trình sản xuất',ans:'C'},
+{q:'Kinh tế chính trị Mác - Lênin nghiên cứu quan hệ xã hội của sản xuất và trao đổi trong mối liên hệ biện chứng với yếu tố nào?',a:'Tâm lý và hành vi người tiêu dùng',b:'Lực lượng sản xuất và kiến trúc thượng tầng tương ứng',c:'Tự nhiên và môi trường sinh thái',d:'Nền kinh tế kế hoạch hóa tập trung',ans:'B'},
+{q:'Mục đích nghiên cứu ở cấp độ cao nhất của kinh tế chính trị Mác - Lênin là gì?',a:'Tối đa hóa lợi nhuận cho doanh nghiệp',b:'Giải quyết tình trạng khan hiếm nguồn lực',c:'Phát hiện ra các quy luật chi phối quan hệ giữa người với người trong sản xuất và trao đổi',d:'Phân tích sự biến động của giá cả chứng khoán',ans:'C'},
+{q:'Nhận định nào sau đây là đúng về quy luật kinh tế?',a:'Tồn tại khách quan, không phụ thuộc vào ý chí con người',b:'Là sản phẩm chủ quan của con người',c:'Có thể được thủ tiêu bằng các mệnh lệnh hành chính',d:'Chỉ phát huy tác dụng khi có nhà nước can thiệp',ans:'A'},
+{q:'Chính sách kinh tế khác với quy luật kinh tế ở điểm nào?',a:'Chính sách kinh tế mang tính khách quan',b:'Chính sách kinh tế không tác động vào lợi ích',c:'Chính sách kinh tế là sản phẩm chủ quan của con người',d:'Chính sách kinh tế không thể thay đổi được',ans:'C'},
+{q:'Phương pháp nghiên cứu chủ yếu và đặc thù của kinh tế chính trị Mác - Lênin là phương pháp nào?',a:'Phương pháp toán học và mô hình hóa',b:'Phương pháp trừu tượng hóa khoa học',c:'Phương pháp thí nghiệm trong phòng thí nghiệm',d:'Phương pháp điều tra xã hội học',ans:'B'},
+{q:'Phương pháp trừu tượng hóa khoa học được hiểu là:',a:'Tổng hợp tất cả các hiện tượng ngẫu nhiên để tìm bản chất',b:'Gạt bỏ những hiện tượng tạm thời, ngẫu nhiên để tách ra những dấu hiệu điển hình, bền vững',c:'Đo lường chính xác các đại lượng kinh tế bằng toán học',d:'Lập bảng thống kê các số liệu kinh tế vĩ mô',ans:'B'},
+{q:'Chức năng cung cấp hệ thống tri thức lý luận về sự vận động của các quan hệ sản xuất và trao đổi là biểu hiện của chức năng nào của KTCT Mác - Lênin?',a:'Chức năng phương pháp luận',b:'Chức năng thực tiễn',c:'Chức năng nhận thức',d:'Chức năng tư tưởng',ans:'C'},
+{q:'Khi nghiên cứu KTCT Mác - Lênin giúp người lao động và nhà hoạch định chính sách hình thành năng lực vận dụng quy luật kinh tế vào đời sống. Đó là chức năng gì?',a:'Chức năng nhận thức',b:'Chức năng thực tiễn',c:'Chức năng tư tưởng',d:'Chức năng phương pháp luận',ans:'B'},
+{q:'Việc KTCT Mác - Lênin cung cấp nền tảng lý luận khoa học cho việc nhận diện sâu hơn nội hàm của các khoa học kinh tế chuyên ngành thể hiện chức năng nào?',a:'Chức năng nhận thức',b:'Chức năng tư tưởng',c:'Chức năng phương pháp luận',d:'Chức năng thực tiễn',ans:'C'},
+{q:'Chức năng tư tưởng của kinh tế chính trị Mác - Lênin hướng tới điều gì?',a:'Góp phần xây dựng lý tưởng khoa học, phấn đấu vì dân giàu, nước mạnh, công bằng, văn minh',b:'Trang bị kỹ năng quản lý doanh nghiệp',c:'Đưa ra các công thức toán học về lợi nhuận',d:'Hướng dẫn cách thức đầu tư chứng khoán',ans:'A'},
+{q:'Sản xuất hàng hóa là kiểu tổ chức kinh tế mà ở đó sản phẩm được tạo ra nhằm mục đích gì?',a:'Thỏa mãn nhu cầu tiêu dùng trực tiếp của người sản xuất',b:'Tích lũy cho nhà nước',c:'Trao đổi, mua bán',d:'Biếu, tặng, viện trợ',ans:'C'},
+{q:'Nền kinh tế hàng hóa hình thành và phát triển dựa trên mấy điều kiện cơ bản?',a:'1',b:'2',c:'3',d:'4',ans:'B'},
+{q:'Sự phân chia lao động trong xã hội thành các ngành, các lĩnh vực sản xuất khác nhau được gọi là gì?',a:'Tách biệt về mặt kinh tế',b:'Hợp tác lao động',c:'Phân công lao động xã hội',d:'Phân hóa xã hội',ans:'C'},
+{q:'Điều kiện đủ để nền sản xuất hàng hóa ra đời và phát triển là gì?',a:'Sự ra đời của nhà nước',b:'Sự xuất hiện của tiền tệ',c:'Sự tách biệt về mặt kinh tế của các chủ thể sản xuất',d:'Phân công lao động xã hội',ans:'C'},
+{q:'Sự tách biệt về mặt kinh tế giữa các chủ thể sản xuất xuất hiện khách quan dựa trên cơ sở nào?',a:'Sự khác biệt về trình độ tay nghề',b:'Sự tách biệt về sở hữu tư liệu sản xuất',c:'Sự khác biệt về vị trí địa lý',d:'Sự ra đời của thị trường chứng khoán',ans:'B'},
+{q:'Hàng hóa là gì?',a:'Mọi sản phẩm do con người tạo ra',b:'Bất cứ thứ gì có sẵn trong tự nhiên có ích cho con người',c:'Sản phẩm của lao động, có thể thỏa mãn nhu cầu nào đó của con người thông qua trao đổi, mua bán',d:'Sản phẩm của lao động để tự tiêu dùng',ans:'C'},
+{q:'Hàng hóa có mấy thuộc tính?',a:'1',b:'2',c:'3',d:'4',ans:'B'},
+{q:'Giá trị sử dụng của hàng hóa được hiểu là gì?',a:'Số tiền mua được hàng hóa đó',b:'Công dụng của sản phẩm có thể thỏa mãn nhu cầu nào đó của con người',c:'Lao động xã hội của người sản xuất kết tinh trong hàng hóa',d:'Sự khan hiếm của sản phẩm trên thị trường',ans:'B'},
+{q:'Giá trị sử dụng của hàng hóa nhằm đáp ứng yêu cầu của đối tượng nào?',a:'Người sản xuất ra nó',b:'Người mua (xã hội)',c:'Người phân phối',d:'Cơ quan quản lý nhà nước',ans:'B'},
+{q:'Giá trị của hàng hóa là gì?',a:'Hao phí vật tư máy móc để tạo ra sản phẩm',b:'Lao động xã hội của người sản xuất hàng hóa kết tinh trong hàng hóa',c:'Giá cả của hàng hóa trên thị trường',d:'Độ bền và tính thẩm mỹ của sản phẩm',ans:'B'},
+{q:'Tỷ lệ trao đổi giữa các giá trị sử dụng khác nhau được gọi là gì?',a:'Giá cả hàng hóa',b:'Giá trị trao đổi',c:'Giá trị thặng dư',d:'Tiền tệ',ans:'B'},
+{q:'Sở dĩ các hàng hóa có giá trị sử dụng khác nhau có thể trao đổi được với nhau là vì:',a:'Chúng đều có ích cho con người',b:'Chúng đều là sản phẩm của tự nhiên',c:'Chúng đều có lượng lao động xã hội hao phí bằng nhau để tạo ra',d:'Chúng đều khan hiếm',ans:'C'},
+{q:'Cơ sở của tỷ lệ trao đổi giữa các hàng hóa là gì?',a:'Giá trị sử dụng',b:'Sự thỏa thuận ngẫu nhiên',c:'Giá trị của hàng hóa',d:'Mệnh lệnh của nhà nước',ans:'C'},
+{q:'Tính hai mặt của lao động sản xuất hàng hóa gồm:',a:'Lao động trí óc và lao động chân tay',b:'Lao động phức tạp và lao động giản đơn',c:'Lao động cụ thể và lao động trừu tượng',d:'Lao động quá khứ và lao động sống',ans:'C'},
+{q:'Ai là người đầu tiên phát hiện ra tính hai mặt của lao động sản xuất hàng hóa?',a:'Adam Smith',b:'David Ricardo',c:'Karl Marx',d:'V.I. Lênin',ans:'C'},
+{q:'Lao động cụ thể là gì?',a:'Lao động tạo ra giá trị của hàng hóa',b:'Lao động có ích dưới một hình thức cụ thể của những nghề nghiệp chuyên môn nhất định',c:'Sự hao phí sức lao động nói chung về cơ bắp và thần kinh',d:'Lao động của người nông dân',ans:'B'},
+{q:'Lao động trừu tượng tạo ra thuộc tính nào của hàng hóa?',a:'Giá trị sử dụng',b:'Cả giá trị sử dụng và giá trị',c:'Giá trị',d:'Hình dáng, kích thước của hàng hóa',ans:'C'},
+{q:'Lao động cụ thể phản ánh tính chất gì của lao động sản xuất hàng hóa?',a:'Tính chất xã hội',b:'Tính chất trừu tượng',c:'Tính chất tư nhân',d:'Tính chất tập thể',ans:'C'},
+{q:'Nguy cơ khủng hoảng tiềm ẩn trong nền kinh tế hàng hóa xuất hiện khi nào?',a:'Khi có sự thống nhất tuyệt đối giữa cung và cầu',b:'Khi mâu thuẫn giữa lao động tư nhân (lao động cụ thể) và lao động xã hội (lao động trừu tượng) không được giải quyết (hàng hóa không bán được)',c:'Khi giá cả bằng với giá trị',d:'Khi không có tiền tệ lưu thông',ans:'B'},
+{q:'Lượng giá trị của một đơn vị hàng hóa được đo lường bằng đại lượng nào?',a:'Thời gian lao động cá biệt',b:'Thời gian lao động xã hội cần thiết',c:'Khối lượng nguyên vật liệu hao phí',d:'Số lượng tiền mặt để mua hàng hóa đó',ans:'B'},
+{q:'Thời gian lao động xã hội cần thiết là thời gian đòi hỏi để sản xuất ra một giá trị sử dụng trong điều kiện nào?',a:'Điều kiện sản xuất tốt nhất, năng suất cao nhất',b:'Điều kiện sản xuất xấu nhất, năng suất thấp nhất',c:'Điều kiện bình thường của xã hội với trình độ thành thạo và cường độ lao động trung bình',d:'Điều kiện của doanh nghiệp độc quyền',ans:'C'},
+{q:'Cấu thành lượng giá trị của một đơn vị hàng hóa bao gồm những phần nào?',a:'Tiền công và lợi nhuận',b:'Hao phí lao động quá khứ và hao phí lao động mới kết tinh thêm',c:'Chi phí cố định và chi phí biến đổi',d:'Chi phí nguyên liệu và chi phí máy móc',ans:'B'},
+{q:'Năng suất lao động tăng lên sẽ làm cho lượng giá trị trong một đơn vị hàng hóa thay đổi như thế nào?',a:'Tăng lên',b:'Giảm xuống',c:'Không thay đổi',d:'Gấp đôi',ans:'B'},
+{q:'Đại lượng giá trị của một hàng hóa thay đổi tỷ lệ nghịch với nhân tố nào?',a:'Cường độ lao động',b:'Thời gian lao động xã hội cần thiết',c:'Năng suất lao động (sức sản xuất của lao động)',d:'Mức độ phức tạp của lao động',ans:'C'},
+{q:'Yếu tố nào sau đây KHÔNG phải là nhân tố ảnh hưởng đến năng suất lao động?',a:'Trình độ khéo léo trung bình của người lao động',b:'Các điều kiện tự nhiên',c:'Tốc độ thao tác khẩn trương của người lao động (chỉ làm tăng cường độ lao động)',d:'Mức độ áp dụng khoa học công nghệ vào sản xuất',ans:'C'},
+{q:'Khi tăng cường độ lao động, lượng giá trị của một đơn vị hàng hóa sẽ thay đổi như thế nào?',a:'Giảm xuống',b:'Tăng lên',c:'Không thay đổi',d:'Tăng gấp đôi',ans:'C'},
+{q:'Khi tăng cường độ lao động, tổng lượng giá trị của tất cả hàng hóa gộp lại sẽ thay đổi như thế nào?',a:'Không thay đổi',b:'Giảm xuống',c:'Tăng lên',d:'Tăng theo cấp số nhân',ans:'C'},
+{q:'Lao động phức tạp có đặc điểm gì so với lao động giản đơn?',a:'Đòi hỏi quá trình đào tạo chuyên môn, tạo ra nhiều giá trị hơn trong cùng thời gian',b:'Không cần qua đào tạo',c:'Tạo ra lượng giá trị bằng nhau trong cùng thời gian',d:'Chỉ tạo ra giá trị sử dụng, không tạo ra giá trị',ans:'A'},
+{q:'Theo lý luận của C. Mác, lao động phức tạp thực chất là gì?',a:'Lao động tạo ra công nghệ cao',b:'Lao động giản đơn được nhân bội lên',c:'Lao động có cường độ cao nhất',d:'Lao động trừu tượng',ans:'B'},
+{q:'Ai là người có lợi nhất khi hạ thấp hao phí lao động cá biệt xuống mức thấp hơn thời gian lao động xã hội cần thiết?',a:'Người tiêu dùng',b:'Nhà nước',c:'Người sản xuất có hao phí cá biệt thấp',d:'Tất cả mọi người sản xuất',ans:'C'},
+{q:'Hình thái ban đầu của giá trị xuất hiện trong thời kỳ sơ khai của trao đổi hàng hóa là hình thái nào?',a:'Hình thái chung của giá trị',b:'Hình thái tiền',c:'Hình thái giá trị giản đơn (ngẫu nhiên)',d:'Hình thái giá trị đầy đủ (mở rộng)',ans:'C'},
+{q:'Trong phương trình trao đổi: 1 con cừu = 2 cái rìu. Hàng hóa nào đóng vai trò là hình thái vật ngang giá?',a:'Con cừu',b:'Cái rìu',c:'Cả hai',d:'Không có vật ngang giá',ans:'B'},
+{q:'Sự khác biệt căn bản giữa hình thái chung của giá trị và hình thái tiền tệ là gì?',a:'Hình thái chung biểu hiện ở nhiều hàng hóa, hình thái tiền tệ cố định ở một hàng hóa làm vật ngang giá chung (thường là vàng)',b:'Hình thái tiền tệ không có vật ngang giá',c:'Hình thái chung chỉ dùng cho mua bán quốc tế',d:'Không có sự khác biệt',ans:'A'},
+{q:'Bản chất của tiền tệ là gì?',a:'Là một loại giấy chứng nhận có giá trị',b:'Là một loại hàng hóa đặc biệt, làm vật ngang giá chung cho thế giới hàng hóa',c:'Là tài sản của quốc gia',d:'Là sự quy ước chủ quan của con người',ans:'B'},
+{q:'Theo lý luận KTCT Mác - Lênin, tiền có mấy chức năng cơ bản?',a:'3',b:'4',c:'5',d:'6',ans:'C'},
+{q:'Giá cả hàng hóa là gì?',a:'Hình thức biểu hiện bằng tiền của giá trị hàng hóa',b:'Số lượng tiền mặt để thanh toán chi phí sản xuất',c:'Giá trị sử dụng của hàng hóa',d:'Mức độ khan hiếm của hàng hóa',ans:'A'},
+{q:'Để thực hiện chức năng thước đo giá trị, tiền cần có đặc điểm gì?',a:'Phải là tiền mặt thật sự',b:'Phải có đủ giá trị và chỉ cần một lượng tiền tưởng tượng',c:'Phải là tiền giấy do ngân hàng trung ương phát hành',d:'Phải là ngoại tệ',ans:'B'},
+{q:'Chức năng nào của tiền làm cho hành vi mua và hành vi bán có thể tách rời nhau về không gian và thời gian?',a:'Phương tiện thanh toán',b:'Phương tiện lưu thông',c:'Phương tiện cất trữ',d:'Tiền tệ thế giới',ans:'B'},
+{q:'Để thực hiện chức năng phương tiện cất trữ, tiền phải đáp ứng yêu cầu gì?',a:'Phải là tiền giấy mới tinh',b:'Phải là tiền điện tử',c:'Phải có đủ giá trị (tiền vàng, tiền bạc)',d:'Không cần có đủ giá trị',ans:'C'},
+{q:'Khi tiền được dùng để trả nợ, nộp thuế, trả tiền mua chịu hàng hóa, tiền đang thực hiện chức năng gì?',a:'Phương tiện lưu thông',b:'Phương tiện cất trữ',c:'Phương tiện thanh toán',d:'Thước đo giá trị',ans:'C'},
+{q:'Chức năng tiền tệ thế giới của tiền phát huy khi nào?',a:'Khi trao đổi hàng hóa vượt ra khỏi biên giới quốc gia',b:'Khi nền kinh tế bị lạm phát',c:'Khi có mua bán trả góp',d:'Khi nhà nước phát hành trái phiếu',ans:'A'},
+{q:'Theo C. Mác, dịch vụ là gì?',a:'Là hàng hóa vô hình',b:'Không phải là hàng hóa',c:'Chỉ là hành vi phục vụ không có giá trị',d:'Là hàng hóa hữu hình',ans:'A'},
+{q:'Điểm khác biệt cơ bản giữa dịch vụ và hàng hóa thông thường là gì?',a:'Dịch vụ không do lao động tạo ra',b:'Việc sản xuất và tiêu dùng dịch vụ diễn ra đồng thời, không thể cất trữ',c:'Dịch vụ không có giá cả',d:'Dịch vụ không có giá trị sử dụng',ans:'B'},
+{q:'Khi thực hiện mua bán quyền sử dụng đất, bản chất của hiện tượng này là gì?',a:'Mua bán đất đai (vật chất tự nhiên) như hàng hóa thông thường',b:'Trao đổi quyền sử dụng đất, loại hàng hóa đặc biệt không do hao phí lao động trực tiếp tạo ra',c:'Mua bán giá trị sức lao động của người nông dân',d:'Trao đổi giá trị sử dụng thuần túy',ans:'B'},
+{q:'Giá cả của quyền sử dụng đất KHÔNG chịu tác động chủ yếu bởi yếu tố nào dưới đây?',a:'Hao phí lao động trực tiếp để sản xuất ra mảnh đất đó',b:'Quan hệ cung - cầu và sự khan hiếm',c:'Tốc độ đô thị hóa, công nghiệp hóa',d:'Giá trị của tiền và đầu cơ',ans:'A'},
+{q:'Thương hiệu (danh tiếng) của doanh nghiệp có thể trao đổi, mua bán với giá rất cao. Điều kiện cốt lõi để thương hiệu có giá trị thực là gì?',a:'Dựa trên sự thổi phồng của truyền thông',b:'Dựa trên cơ sở một kiểu sản xuất hàng hóa, dịch vụ thực có chất lượng',c:'Dựa trên quyết định của nhà nước',d:'Dựa trên độc quyền thông tin',ans:'B'},
+{q:'Giá cả trong các vụ chuyển nhượng cầu thủ bóng đá nổi tiếng thực chất phản ánh điều gì?',a:'Mua bán bản thân con người cầu thủ',b:'Mua bán sức lao động, yếu tố tài năng, độ khan hiếm và lợi ích kỳ vọng của câu lạc bộ',c:'Mua bán hàng hóa vật thể thông thường',d:'Sự gian lận trên thị trường thể thao',ans:'B'},
+{q:'C. Mác gọi những loại hàng hóa như chứng khoán, chứng quyền, giấy tờ có giá là gì?',a:'Tư bản thực',b:'Tư bản khả biến',c:'Tư bản giả',d:'Tư bản bất biến',ans:'C'},
+{q:'Sự giàu có của toàn thể xã hội có thể dựa duy nhất vào việc buôn bán chứng khoán, bất động sản không?',a:'Có, vì thị trường này quay vòng vốn rất nhanh',b:'Có, vì đây là những ngành siêu lợi nhuận',c:'Không, xã hội cần phải dựa trên một nền sản xuất hàng hóa, dịch vụ thực',d:'Không, vì nhà nước cấm giao dịch',ans:'C'},
+{q:'Trong các giao dịch mua bán chứng khoán mang lại lợi nhuận cho một cá nhân, tiền chủ yếu thực hiện chức năng gì?',a:'Thước đo giá trị',b:'Tiền tệ thế giới',c:'Phương tiện thanh toán (chuyển tiền từ túi người này sang người khác)',d:'Phương tiện cất trữ',ans:'C'},
+{q:'Theo nghĩa trừu tượng, thị trường là gì?',a:'Một cái chợ cụ thể',b:'Siêu thị hoặc trung tâm thương mại',c:'Tổng hòa những quan hệ kinh tế, trong đó nhu cầu của các chủ thể được đáp ứng thông qua trao đổi, mua bán',d:'Phòng giao dịch chứng khoán',ans:'C'},
+{q:'Căn cứ vào đối tượng trao đổi, mua bán, thị trường được phân chia thành:',a:'Thị trường trong nước và thế giới',b:'Thị trường tự do và có điều tiết',c:'Thị trường hàng hóa và thị trường dịch vụ',d:'Thị trường cạnh tranh hoàn hảo và độc quyền',ans:'C'},
+{q:'Nhận định nào sau đây KHÔNG phải là vai trò của thị trường?',a:'Nơi thực hiện giá trị hàng hóa',b:'Nơi xóa bỏ hoàn toàn khoảng cách giàu nghèo',c:'Gắn kết nền kinh tế thành một chỉnh thể',d:'Kích thích sự sáng tạo, phân bổ nguồn lực hiệu quả',ans:'B'},
+{q:'"Bàn tay vô hình" điều chỉnh các quan hệ kinh tế là hình ảnh ví von của ai về cơ chế thị trường?',a:'Karl Marx',b:'David Ricardo',c:'Adam Smith',d:'V.I. Lênin',ans:'C'},
+{q:'Nền kinh tế thị trường là gì?',a:'Nền kinh tế tự cung tự cấp',b:'Nền kinh tế hàng hóa phát triển cao, được vận hành theo cơ chế thị trường',c:'Nền kinh tế chỉ có các doanh nghiệp nhà nước',d:'Nền kinh tế không có sự tồn tại của tiền tệ',ans:'B'},
+{q:'Đặc trưng phổ biến của mọi nền kinh tế thị trường là:',a:'Chỉ có một hình thức sở hữu duy nhất',b:'Nhà nước không can thiệp vào nền kinh tế',c:'Đóng cửa với thị trường thế giới',d:'Đa dạng chủ thể kinh tế, phân bổ nguồn lực qua thị trường, giá cả theo nguyên tắc thị trường',ans:'D'},
+{q:'Một trong những ưu thế nổi bật của nền kinh tế thị trường là gì?',a:'Luôn tự khắc phục được khủng hoảng',b:'Luôn tạo ra động lực cho sự sáng tạo của các chủ thể kinh tế',c:'Tự ngăn chặn suy thoái môi trường',d:'Tự động chia đều thu nhập cho mọi người',ans:'B'},
+{q:'Nhược điểm (khuyết tật) vốn có của nền kinh tế thị trường là gì?',a:'Làm triệt tiêu động lực lao động',b:'Luôn tiềm ẩn rủi ro khủng hoảng, phân hóa xã hội sâu sắc, suy thoái môi trường',c:'Không thỏa mãn được nhu cầu phong phú của con người',d:'Kìm hãm sự phát triển của công nghệ mới',ans:'B'},
+{q:'Để khắc phục khuyết tật của nền kinh tế thị trường, cần có vai trò của chủ thể nào?',a:'Người tiêu dùng',b:'Nhà nước',c:'Các doanh nghiệp nước ngoài',d:'Người môi giới',ans:'B'},
+{q:'Quy luật kinh tế cơ bản nhất của sản xuất hàng hóa là quy luật nào?',a:'Quy luật cung cầu',b:'Quy luật cạnh tranh',c:'Quy luật giá trị',d:'Quy luật lưu thông tiền tệ',ans:'C'},
+{q:'Quy luật giá trị yêu cầu việc sản xuất và trao đổi hàng hóa phải được tiến hành trên cơ sở nào?',a:'Hao phí lao động cá biệt lớn nhất',b:'Hao phí lao động cá biệt nhỏ nhất',c:'Hao phí lao động xã hội cần thiết',d:'Sở thích chủ quan của người mua',ans:'C'},
+{q:'Cơ chế hoạt động của quy luật giá trị bộc lộ thông qua hiện tượng nào trên thị trường?',a:'Sự thay đổi chất lượng hàng hóa',b:'Sự lên xuống của giá cả xoay quanh giá trị do tác động của cung cầu',c:'Sự can thiệp hành chính của nhà nước',d:'Sự phát triển của các hình thức tiền tệ',ans:'B'},
+{q:'Tác động nào sau đây KHÔNG phải là tác động của quy luật giá trị?',a:'Điều tiết sản xuất và lưu thông hàng hóa',b:'Cào bằng thu nhập của mọi người sản xuất',c:'Kích thích cải tiến kỹ thuật, hợp lý hóa sản xuất',d:'Phân hóa những người sản xuất thành người giàu, người nghèo',ans:'B'},
+{q:'Khi cung lớn hơn cầu trên thị trường, giá cả hàng hóa sẽ có xu hướng như thế nào so với giá trị?',a:'Lớn hơn giá trị',b:'Bằng giá trị',c:'Thấp hơn giá trị',d:'Cố định không đổi',ans:'C'},
+{q:'Quy luật kinh tế điều tiết mối quan hệ giữa bên bán và bên mua trên thị trường là quy luật nào?',a:'Quy luật giá trị',b:'Quy luật cung cầu',c:'Quy luật lưu thông tiền tệ',d:'Quy luật cạnh tranh',ans:'B'},
+{q:'Theo công thức M = (P.Q)/V của quy luật lưu thông tiền tệ, khối lượng tiền cần thiết cho lưu thông tỷ lệ nghịch với yếu tố nào?',a:'Tổng số giá cả hàng hóa (P.Q)',b:'Khối lượng hàng hóa (Q)',c:'Số vòng lưu thông của đồng tiền (V)',d:'Mức giá cả (P)',ans:'C'},
+{q:'Nếu lượng tiền giấy phát hành ra lưu thông vượt quá số lượng tiền vàng (hoặc khối lượng tiền cần thiết) thì hiện tượng kinh tế nào sẽ xảy ra?',a:'Giảm phát',b:'Lạm phát',c:'Tăng giá trị đồng tiền',d:'Hàng hóa giảm giá',ans:'B'},
+{q:'Sự ganh đua kinh tế giữa các chủ thể nhằm giành ưu thế để thu lợi ích tối đa được gọi là gì?',a:'Hợp tác',b:'Độc quyền',c:'Cạnh tranh',d:'Liên doanh',ans:'C'},
+{q:'Cạnh tranh trong nội bộ ngành là cạnh tranh giữa các doanh nghiệp sản xuất trong cùng một ngành hàng. Kết quả của loại cạnh tranh này là gì?',a:'Hình thành tỷ suất lợi nhuận bình quân',b:'Hình thành giá trị thị trường của từng loại hàng hóa',c:'Chuyển dịch vốn sang ngành khác',d:'Xóa bỏ hoàn toàn độc quyền',ans:'B'},
+{q:'Mục đích của cạnh tranh giữa các ngành là gì?',a:'Giảm hao phí lao động cá biệt',b:'Cải tiến kỹ thuật công nghệ',c:'Tìm nơi đầu tư có lợi nhất (tỷ suất lợi nhuận cao)',d:'Tăng cường uy tín thương hiệu',ans:'C'},
+{q:'Biện pháp của cạnh tranh giữa các ngành là gì?',a:'Áp dụng công nghệ mới trong xí nghiệp',b:'Tăng cường độ lao động của công nhân',c:'Tự do di chuyển nguồn vốn từ ngành này sang ngành khác',d:'Hạ thấp giá trị cá biệt',ans:'C'},
+{q:'Tác động tiêu cực của cạnh tranh (đặc biệt là cạnh tranh không lành mạnh) là gì?',a:'Thúc đẩy tiến bộ khoa học kỹ thuật',b:'Gây lãng phí nguồn lực xã hội và tổn hại môi trường kinh doanh',c:'Phân bổ nguồn lực hiệu quả hơn',d:'Đem lại nhiều hàng hóa rẻ và tốt hơn cho xã hội',ans:'B'},
+{q:'Vai trò chính của người sản xuất trong nền kinh tế thị trường là gì?',a:'Trực tiếp tiêu dùng sản phẩm của xã hội',b:'Cung cấp hàng hóa, dịch vụ đáp ứng nhu cầu xã hội với mục tiêu lợi nhuận và phải có trách nhiệm xã hội',c:'Ban hành chính sách kinh tế vĩ mô',d:'Môi giới mua bán',ans:'B'},
+{q:'Yếu tố nào từ phía người tiêu dùng có tính quyết định đến sự phát triển bền vững của người sản xuất?',a:'Nơi cư trú của người tiêu dùng',b:'Sở thích chính trị',c:'Sức mua và sự đa dạng về nhu cầu',d:'Trình độ học vấn',ans:'C'},
+{q:'Chủ thể trung gian trong thị trường (như môi giới chứng khoán, siêu thị, thương nhân) đóng vai trò gì?',a:'Trực tiếp tạo ra của cải vật chất',b:'Quản lý vĩ mô nền kinh tế',c:'Đóng vai trò cầu nối, kết nối thông tin giữa sản xuất và tiêu dùng',d:'Là người tiêu dùng cuối cùng',ans:'C'},
+{q:'Trong nền kinh tế thị trường, Nhà nước đóng vai trò chủ yếu gì?',a:'Quyết định giá cả của mọi loại hàng hóa',b:'Phân phối trực tiếp mọi nguồn lực cho người dân',c:'Quản lý vĩ mô, tạo lập môi trường kinh tế và khắc phục khuyết tật của thị trường',d:'Ngăn cấm mọi hoạt động cạnh tranh',ans:'C'},
+{q:'Để tăng cường năng lực cạnh tranh trong nội bộ ngành, các nhà tư bản/doanh nghiệp thường sử dụng biện pháp cơ bản nào?',a:'Chuyển hướng kinh doanh sang ngành khác',b:'Xin trợ cấp từ chính phủ',c:'Cải tiến kỹ thuật, hợp lý hóa sản xuất, tăng năng suất lao động',d:'Bán hàng hóa thấp hơn giá thành sản xuất',ans:'C'},
+{q:'Theo nguyên lý, quy luật giá trị sẽ đào thải những người sản xuất nào?',a:'Có hao phí lao động cá biệt bằng thời gian lao động xã hội cần thiết',b:'Có hao phí lao động cá biệt cao hơn mức xã hội chấp nhận mà không cải tiến',c:'Có hao phí lao động cá biệt thấp hơn thời gian lao động xã hội cần thiết',d:'Cả A, B và C đều sai',ans:'B'},
+{q:'Trong nền kinh tế hàng hóa, tiền tệ là "thước đo giá trị". Chức năng này thể hiện ở việc:',a:'Dùng tiền để mua chịu hàng hóa',b:'Dùng tiền dự trữ trong két sắt',c:'Biểu hiện và đo lường giá trị của tất cả các hàng hóa khác thành "giá cả"',d:'Dùng tiền để mua bán với nước ngoài',ans:'C'},
+{q:'Sự thống nhất biện chứng giữa lao động cụ thể và lao động trừu tượng chỉ tồn tại trong loại hình kinh tế nào?',a:'Kinh tế tự nhiên',b:'Sản xuất tự cấp tự túc',c:'Kinh tế hàng hóa',d:'Kinh tế cộng sản nguyên thủy',ans:'C'}
+];
+
+// ========== FIREBASE ==========
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDBh-i26t2ILOhrIuhbQBetxAj2xsTPAhk",
+  authDomain: "game-bca4b.firebaseapp.com",
+  databaseURL: "https://game-bca4b-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "game-bca4b",
+  storageBucket: "game-bca4b.firebasestorage.app",
+  messagingSenderId: "824009619759",
+  appId: "1:824009619759:web:bcc7ca8868ba32743349da"
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const DB = firebase.database();
+const DB_PLAYERS = DB.ref('treasure_hunt_v2/players');
+
+// ========== STATE ==========
+let G={
+  phase:'playing',board:[],
+  pos:{r:0,c:0},prevPos:null,moveCount:0,
+  filterActive:false,fiftyFiftyCount:0,fiftyRemoved:[],cups:0,totalMoves:0,
+  myPlayerName:'',myPlayerId:'',
+  charAnimTimeout:null,touchStart:null,
+  questionMinimized:false,questionData:null,questionAnswers:null,
+  usedQTexts:[],
+  leaderboardData:[],
+  rankingFrom:'',lastCupGained:true
+};
+function pid(){return 'p_'+Math.random().toString(36).substring(2,10)}
+function loadIdentity(){
+  try{
+    const d=JSON.parse(localStorage.getItem('thSoloIdentity'));
+    if(d&&d.myPlayerId)G.myPlayerId=d.myPlayerId;
+    if(d&&d.myPlayerName)G.myPlayerName=d.myPlayerName;
+    if(typeof d?.cups==='number')G.cups=d.cups;
+    if(typeof d?.fiftyFiftyCount==='number')G.fiftyFiftyCount=d.fiftyFiftyCount;
+    if(typeof d?.totalMoves==='number')G.totalMoves=d.totalMoves;
+  }catch(e){}
+}
+function saveIdentity(){
+  try{
+    localStorage.setItem('thSoloIdentity',JSON.stringify({
+      myPlayerName:G.myPlayerName,
+      myPlayerId:G.myPlayerId,
+      cups:G.cups,
+      fiftyFiftyCount:G.fiftyFiftyCount,
+      totalMoves:G.totalMoves,
+      lastSavedAt:Date.now()
+    }))
+  }catch(e){}
+}
+function clearIdentity(){try{localStorage.removeItem('thSoloIdentity')}catch(e){}}
+function saveIdentityToFirebase(){
+  if(!G.myPlayerId)return;
+  const payload={name:G.myPlayerName,playerId:G.myPlayerId,cups:G.cups,fiftyFiftyCount:G.fiftyFiftyCount,totalMoves:G.totalMoves,lastActive:firebase.database.ServerValue.TIMESTAMP};
+  DB_PLAYERS.child(G.myPlayerId).update(payload).catch(()=>{})
+}
+function setPlayerPresence(isOnline){
+  if(!G.myPlayerId)return;
+  const payload={online:isOnline,lastActive:firebase.database.ServerValue.TIMESTAMP};
+  DB_PLAYERS.child(G.myPlayerId).update(payload).catch(()=>{});
+  if(isOnline){
+    DB_PLAYERS.child(G.myPlayerId).onDisconnect().update({online:false,lastActive:firebase.database.ServerValue.TIMESTAMP}).catch(()=>{})
+  }
+}
+
+async function hashPassword(pw){
+  if(!pw)return'';
+  // Web Crypto is unavailable in some embedded/insecure browser contexts.
+  // Prefer it when present, then fall back to a compatible pure-JS SHA-256.
+  if(globalThis.crypto?.subtle?.digest){
+    try{
+      const enc=new TextEncoder().encode(pw);
+      const buf=await globalThis.crypto.subtle.digest('SHA-256',enc);
+      return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
+    }catch(e){console.warn('Web Crypto unavailable; using SHA-256 fallback.',e)}
+  }
+  return sha256Fallback(pw)
+}
+function sha256Fallback(text){
+  const K=[
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+  ];
+  const H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const input=new TextEncoder().encode(text),bitLength=BigInt(input.length)*8n;
+  const totalLength=Math.ceil((input.length+9)/64)*64,data=new Uint8Array(totalLength);
+  data.set(input);data[input.length]=0x80;
+  for(let i=0;i<8;i++)data[totalLength-1-i]=Number((bitLength>>BigInt(i*8))&255n);
+  const rotr=(x,n)=>(x>>>n)|(x<<(32-n));
+  for(let offset=0;offset<totalLength;offset+=64){
+    const w=new Uint32Array(64);
+    for(let i=0;i<16;i++){const p=offset+i*4;w[i]=((data[p]<<24)|(data[p+1]<<16)|(data[p+2]<<8)|data[p+3])>>>0}
+    for(let i=16;i<64;i++){
+      const s0=rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>>3),s1=rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>>10);
+      w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0
+    }
+    let[a,b,c,d,e,f,g,h]=H;
+    for(let i=0;i<64;i++){
+      const s1=rotr(e,6)^rotr(e,11)^rotr(e,25),ch=(e&f)^(~e&g),t1=(h+s1+ch+K[i]+w[i])>>>0;
+      const s0=rotr(a,2)^rotr(a,13)^rotr(a,22),maj=(a&b)^(a&c)^(b&c),t2=(s0+maj)>>>0;
+      h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0
+    }
+    H[0]=(H[0]+a)>>>0;H[1]=(H[1]+b)>>>0;H[2]=(H[2]+c)>>>0;H[3]=(H[3]+d)>>>0;
+    H[4]=(H[4]+e)>>>0;H[5]=(H[5]+f)>>>0;H[6]=(H[6]+g)>>>0;H[7]=(H[7]+h)>>>0
+  }
+  return H.map(x=>x.toString(16).padStart(8,'0')).join('')
+}
+
+// ========== HELPERS ==========
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.random()*i|0;[a[i],a[j]]=[a[j],a[i]]}return a}
+function showScreen(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));const el=document.getElementById(id);if(el)el.classList.add('active')}
+function toast(msg,duration=2000){
+  const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
+  clearTimeout(t._hide);t._hide=setTimeout(()=>t.classList.remove('show'),duration)
+}
+function showModal(id,html){const el=document.getElementById(id);if(!el)return;const c=el.querySelector('.modal-box');if(c)c.innerHTML=html;el.classList.add('active')}
+function closeModal(id){document.getElementById(id)?.classList.remove('active')}
+function closePlayerModal(){closeModal('playerModal');G.questionMinimized=false;G.questionData=null;G.questionAnswers=null;document.getElementById('questionMinimized')?.classList.add('hidden')}
+function minimizeQuestion(){if(!G.currentCell)return;G.questionMinimized=true;closeModal('playerModal');document.getElementById('questionMinimized')?.classList.remove('hidden')}
+function restoreQuestion(){G.questionMinimized=false;document.getElementById('questionMinimized')?.classList.add('hidden');if(G.questionData&&G.questionAnswers)showLocalQuestion(G.questionData)}
+
+// ========== BOARD GEN WITH BFS ==========
+function hasValidPath(board){
+  const q=[{r:0,c:0}],v=new Set();
+  while(q.length){
+    const {r,c}=q.shift();const k=`${r},${c}`;
+    if(r===7&&c===7)return true;
+    if(v.has(k))continue;v.add(k);
+    for(const[dr,dc] of[[-1,0],[1,0],[0,-1],[0,1]]){
+      const nr=r+dr,nc=c+dc;
+      if(nr>=0&&nr<8&&nc>=0&&nc<8&&board[nr][nc].type!=='wall')q.push({r:nr,c:nc})
+    }
+  }
+  return false
+}
+
+function countReachable(board){
+  const q=[{r:0,c:0}],v=new Set();let count=0;
+  while(q.length){
+    const {r,c}=q.shift();const k=`${r},${c}`;
+    if(v.has(k))continue;v.add(k);count++;
+    for(const[dr,dc] of[[-1,0],[1,0],[0,-1],[0,1]]){
+      const nr=r+dr,nc=c+dc;
+      if(nr>=0&&nr<8&&nc>=0&&nc<8&&board[nr][nc].type!=='wall')q.push({r:nr,c:nc})
+    }
+  }
+  return count
+}
+
+function generateBoard(){
+  let board;
+  for(let attempt=0;attempt<200;attempt++){
+    board=[];
+    for(let r=0;r<8;r++){board[r]=[];for(let c=0;c<8;c++)board[r][c]={type:'empty',data:null}}
+    board[0][0]={type:'start',data:null};board[7][7]={type:'finish',data:null};
+    const avail=[];
+    for(let r=0;r<8;r++)for(let c=0;c<8;c++)if(board[r][c].type==='empty')avail.push([r,c]);
+    shuffle(avail);
+    let placed=0;
+    for(const[r,c]of avail){
+      if(placed>=NUM_WALLS)break;
+      if(r===0&&c===0||r===7&&c===7)continue;
+      board[r][c]={type:'wall',data:null};placed++
+    }
+    if(hasValidPath(board)&&countReachable(board)>=35){
+      const avail2=[];
+      for(let r=0;r<8;r++)for(let c=0;c<8;c++)if(board[r][c].type==='empty')avail2.push([r,c]);
+      shuffle(avail2);
+      const qs=shuffle([...QUESTIONS]);
+      let placed=0;
+      for(let qi=0;qi<avail2.length&&placed<NUM_QUESTIONS;qi++){
+        const[r,c]=avail2[qi];
+        let adj=false;
+        for(const[dr,dc] of[[-1,0],[1,0],[0,-1],[0,1]]){
+          const nr=r+dr,nc=c+dc;
+          if(nr>=0&&nr<8&&nc>=0&&nc<8&&board[nr][nc].type==='question'){adj=true;break}
+        }
+        if(adj)continue;
+        const isHelp=placed>=NUM_QUESTIONS-3;
+        board[r][c]={type:'question',data:{...qs[placed]},isHelp};placed++
+      }
+      return board
+    }
+  }
+  return board
+}
+
+// ========== RENDER PLAYER BOARD ==========
+function renderBoard(){
+  const grid=document.getElementById('boardGrid');if(!grid)return;
+  if(!G.board||G.board.length===0)return;
+  grid.innerHTML='';
+  const pos=G.pos;
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const div=document.createElement('div');
+    const cell=G.board[r][c];const isPlayer=(r===pos.r&&c===pos.c);
+    const isEven=(r+c)%2===0;
+    div.className='cell';
+    if(cell.type==='wall'){div.classList.add('cell-wall',isEven?'cell-even':'cell-odd');div.innerHTML=rockSvg(r,c)}
+    else if(cell.type==='start')div.classList.add('cell-start');
+    else if(cell.type==='finish'){div.classList.add('cell-finish');div.innerHTML=trophySvg()}
+    else if(cell.type==='question'){div.classList.add('cell-q',isEven?'cell-even':'cell-odd');div.innerHTML=crateSvg()}
+    else div.classList.add('cell-empty',isEven?'cell-even':'cell-odd');
+    if(isPlayer){
+      div.classList.add('cell-player');
+      div.innerHTML=playerCharSvg()
+    }
+    grid.appendChild(div)
+  }
+  document.getElementById('moveCount').textContent=G.moveCount;
+}
+
+function playerCharSvg(){
+  return `<svg viewBox="0 0 48 48" width="82%" height="82%" id="playerChar" class="anim-idle drop-shadow-lg">
+    <defs>
+      <linearGradient id="pbHead" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe0c0"/><stop offset="100%" stop-color="#f0c090"/></linearGradient>
+      <linearGradient id="pbBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4fc3f7"/><stop offset="100%" stop-color="#0288d1"/></linearGradient>
+      <linearGradient id="pbBodySh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#81d4fa"/><stop offset="100%" stop-color="#0277bd"/></linearGradient>
+      <linearGradient id="pbHelm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e53935"/><stop offset="100%" stop-color="#b71c1c"/></linearGradient>
+      <linearGradient id="pbBoot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5d4037"/><stop offset="100%" stop-color="#3e2723"/></linearGradient>
+    </defs>
+    <!-- Shadow -->
+    <ellipse cx="24" cy="44" rx="9" ry="2.5" fill="rgba(0,0,0,0.15)"/>
+    <!-- Body — round chibi shape -->
+    <ellipse cx="24" cy="30" rx="13" ry="14" fill="url(#pbBody)" stroke="#01579b" stroke-width="0.6"/>
+    <!-- Belly accent -->
+    <ellipse cx="24" cy="32" rx="9" ry="10" fill="url(#pbBodySh)" opacity="0.4"/>
+    <!-- Belt -->
+    <rect x="12" y="34" width="24" height="3" rx="1.5" fill="#5d4037" stroke="#3e2723" stroke-width="0.3"/>
+    <rect x="21" y="33" width="6" height="5" rx="1" fill="#fdd835" stroke="#f9a825" stroke-width="0.3"/>
+    <!-- Legs — short and round -->
+    <rect x="15" y="39" width="7" height="6" rx="3" fill="url(#pbBody)" stroke="#01579b" stroke-width="0.4" id="charLLeg"/>
+    <rect x="26" y="39" width="7" height="6" rx="3" fill="url(#pbBody)" stroke="#01579b" stroke-width="0.4" id="charRLeg"/>
+    <!-- Boots -->
+    <ellipse cx="18.5" cy="45" rx="4.5" ry="2" fill="url(#pbBoot)" stroke="#2c1a0e" stroke-width="0.3"/>
+    <ellipse cx="29.5" cy="45" rx="4.5" ry="2" fill="url(#pbBoot)" stroke="#2c1a0e" stroke-width="0.3"/>
+    <!-- Arms — short round -->
+    <rect x="8" y="26" width="7" height="6" rx="3" fill="url(#pbBody)" stroke="#01579b" stroke-width="0.4" id="charLArm"/>
+    <rect x="33" y="26" width="7" height="6" rx="3" fill="url(#pbBody)" stroke="#01579b" stroke-width="0.4" id="charRArm"/>
+    <!-- Gloves -->
+    <circle cx="11.5" cy="29" r="3" fill="#fff" stroke="#ccc" stroke-width="0.3"/>
+    <circle cx="36.5" cy="29" r="3" fill="#fff" stroke="#ccc" stroke-width="0.3"/>
+    <!-- Backpack (small, behind body) -->
+    <rect x="32" y="22" width="5" height="8" rx="2.5" fill="#37474f" stroke="#263238" stroke-width="0.4"/>
+    <rect x="33" y="24" width="3" height="4" rx="1" fill="#546e7a"/>
+    <!-- Head — big round -->
+    <circle cx="24" cy="13" r="11.5" fill="url(#pbHead)" stroke="#d4a574" stroke-width="0.5"/>
+    <!-- Helmet — round helmet like Bomberman -->
+    <path d="M13,7 Q13,1 24,0 Q35,1 35,7 L35,12 Q35,14 33,15 Q30,10 24,9 Q18,10 15,15 Q13,14 13,12 Z" fill="url(#pbHelm)" stroke="#8e0000" stroke-width="0.5"/>
+    <!-- Helmet brim -->
+    <path d="M12,12 Q24,15 36,12" fill="none" stroke="#8e0000" stroke-width="1.2" stroke-linecap="round"/>
+    <!-- Antenna on helmet -->
+    <line x1="24" y1="0" x2="24" y2="-2.5" stroke="#b71c1c" stroke-width="0.8" stroke-linecap="round"/>
+    <circle cx="24" cy="-3" r="1" fill="#fdd835"/>
+    <!-- Goggles across forehead -->
+    <path d="M15,10 Q24,8 33,10" fill="none" stroke="#37474f" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="19" cy="10" r="3.5" fill="#90a4ae" stroke="#37474f" stroke-width="0.5" opacity="0.6"/>
+    <circle cx="29" cy="10" r="3.5" fill="#90a4ae" stroke="#37474f" stroke-width="0.5" opacity="0.6"/>
+    <path d="M22.5,10 L25.5,10" stroke="#37474f" stroke-width="1.5"/>
+    <circle cx="19" cy="10" r="1.5" fill="#cfd8dc" opacity="0.4"/>
+    <circle cx="29" cy="10" r="1.5" fill="#cfd8dc" opacity="0.4"/>
+    <!-- Eyes — big, white, cute -->
+    <circle cx="19" cy="14" r="3" fill="#fff" stroke="#ccc" stroke-width="0.3"/>
+    <circle cx="29" cy="14" r="3" fill="#fff" stroke="#ccc" stroke-width="0.3"/>
+    <circle cx="19" cy="14" r="1.6" fill="#111"/>
+    <circle cx="29" cy="14" r="1.6" fill="#111"/>
+    <circle cx="19.8" cy="13.2" r="0.6" fill="#fff"/>
+    <circle cx="29.8" cy="13.2" r="0.6" fill="#fff"/>
+    <!-- Rosy cheeks -->
+    <ellipse cx="14" cy="16" rx="2" ry="1.2" fill="#ff9e9e" opacity="0.5"/>
+    <ellipse cx="34" cy="16" rx="2" ry="1.2" fill="#ff9e9e" opacity="0.5"/>
+    <!-- Smile -->
+    <path d="M21,18 Q24,21 27,18" fill="none" stroke="#b5714a" stroke-width="1.2" stroke-linecap="round"/>
+    <!-- Nose -->
+    <circle cx="24" cy="16" r="0.6" fill="#d4a574"/>
+  </svg>`
+}
+
+function rockSvg(r,c){
+  const variants=[rockSvg1,rockSvg2,rockSvg3];
+  return variants[(r*7+c)%3]()
+}
+function rockSvg1(){
+  return `<svg viewBox="0 0 48 48" width="94%" height="94%">
+    <defs>
+      <linearGradient id="rb1L" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d4dce8"/><stop offset="50%" stop-color="#8b99ae"/><stop offset="100%" stop-color="#4a5568"/></linearGradient>
+      <linearGradient id="rb1T" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="50%" stop-color="#9ca3af"/><stop offset="100%" stop-color="#3b4a5c"/></linearGradient>
+      <radialGradient id="rb1Hl" cx="0.25" cy="0.2" r="0.3"><stop offset="0" stop-color="#fff" stop-opacity="0.35"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    </defs>
+    <ellipse cx="24" cy="44" rx="16" ry="4" fill="rgba(0,0,0,0.22)"/>
+    <!-- Natural rock shape with facets -->
+    <path d="M6,14 L8,6 L16,4 L26,5 L36,7 L42,12 L44,22 L42,32 L38,40 L28,43 L18,42 L10,38 L5,28 L4,20 Z" fill="url(#rb1L)" stroke="#1e293b" stroke-width="0.6"/>
+    <!-- Top-left light facet -->
+    <path d="M8,6 L16,4 L26,5 L20,12 L12,10 Z" fill="#c1cdd9" opacity="0.5"/>
+    <!-- Top highlight -->
+    <path d="M16,4 L26,5 L24,10 L18,9 Z" fill="#dfe6ed" opacity="0.6"/>
+    <!-- Right-side facet (medium tone) -->
+    <path d="M36,7 L42,12 L42,22 L35,20 L32,12 Z" fill="#6b7d94" opacity="0.4"/>
+    <!-- Bottom-right dark shadow facet -->
+    <path d="M42,32 L38,40 L28,43 L30,35 L38,30 Z" fill="#2d3748" opacity="0.5"/>
+    <!-- Left side darker facet -->
+    <path d="M6,14 L10,22 L12,28 L5,28 L4,20 Z" fill="#4a5568" opacity="0.4"/>
+    <!-- Center lighter facet -->
+    <path d="M20,12 L32,12 L35,20 L30,28 L18,26 L15,18 Z" fill="#a8b5c8" opacity="0.3"/>
+    <!-- Radial highlight overlay top-left -->
+    <ellipse cx="18" cy="10" rx="10" ry="8" fill="url(#rb1Hl)"/>
+    <!-- Small crack at top -->
+    <path d="M20,7 L22,10 L19,12" fill="none" stroke="#1a202c" stroke-width="1.6" opacity="0.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M20,7 L22,10 L19,12" fill="none" stroke="#94a3b8" stroke-width="0.6" opacity="0.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Natural spots/mineral marks -->
+    <ellipse cx="14" cy="18" rx="1.2" ry="0.8" fill="#3b4a5c" opacity="0.3"/>
+    <ellipse cx="32" cy="24" rx="0.9" ry="1.1" fill="#2d3748" opacity="0.25"/>
+    <circle cx="22" cy="32" r="0.7" fill="#475569" opacity="0.2"/>
+    <ellipse cx="38" cy="16" rx="0.6" ry="0.8" fill="#334155" opacity="0.3"/>
+  </svg>`
+}
+function rockSvg2(){
+  return `<svg viewBox="0 0 48 48" width="94%" height="94%">
+    <defs>
+      <linearGradient id="rb2L" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" stop-color="#cbd5e1"/><stop offset="40%" stop-color="#94a3b8"/><stop offset="100%" stop-color="#475569"/></linearGradient>
+      <radialGradient id="rb2Hl" cx="0.3" cy="0.25" r="0.35"><stop offset="0" stop-color="#fff" stop-opacity="0.4"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    </defs>
+    <ellipse cx="24" cy="45" rx="15" ry="3.5" fill="rgba(0,0,0,0.2)"/>
+    <!-- Irregular rock shape variant 2 -->
+    <path d="M10,8 L18,4 L28,5 L38,8 L44,16 L45,26 L42,35 L35,42 L25,44 L15,42 L8,36 L4,26 L5,16 Z" fill="url(#rb2L)" stroke="#1e293b" stroke-width="0.6"/>
+    <!-- Top facet (brightest) -->
+    <path d="M18,4 L28,5 L38,8 L32,14 L22,12 L16,10 Z" fill="#dfe6ed" opacity="0.55"/>
+    <!-- Upper-left light facet -->
+    <path d="M10,8 L18,4 L22,12 L16,16 L10,14 Z" fill="#b8c5d6" opacity="0.45"/>
+    <!-- Right side medium-dark facet -->
+    <path d="M38,8 L44,16 L45,26 L38,24 L34,16 Z" fill="#64748b" opacity="0.45"/>
+    <!-- Bottom shadow facet -->
+    <path d="M35,42 L25,44 L15,42 L18,34 L28,35 Z" fill="#334155" opacity="0.5"/>
+    <!-- Left dark facet -->
+    <path d="M8,36 L4,26 L5,16 L10,20 L12,30 Z" fill="#3b4a5c" opacity="0.4"/>
+    <!-- Center facet -->
+    <path d="M22,12 L34,16 L36,26 L30,34 L18,32 L16,22 Z" fill="#9ca3af" opacity="0.35"/>
+    <!-- Highlight overlay -->
+    <ellipse cx="25" cy="12" rx="9" ry="7" fill="url(#rb2Hl)"/>
+    <!-- Crack at top-right corner -->
+    <path d="M34,8 L36,11 L32,13" fill="none" stroke="#1a202c" stroke-width="1.5" opacity="0.65" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M34,8 L36,11 L32,13" fill="none" stroke="#cbd5e1" stroke-width="0.5" opacity="0.35" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Natural texture spots -->
+    <ellipse cx="12" cy="22" rx="1" ry="1.3" fill="#334155" opacity="0.3"/>
+    <circle cx="28" cy="28" r="0.8" fill="#475569" opacity="0.25"/>
+    <ellipse cx="38" cy="20" rx="0.7" ry="0.9" fill="#3b4a5c" opacity="0.28"/>
+    <circle cx="18" cy="36" r="0.6" fill="#2d3748" opacity="0.22"/>
+  </svg>`
+}
+function rockSvg3(){
+  return `<svg viewBox="0 0 48 48" width="94%" height="94%">
+    <defs>
+      <linearGradient id="rb3L" x1="0" y1="0.2" x2="1" y2="0.9"><stop offset="0" stop-color="#c7d2dd"/><stop offset="45%" stop-color="#8b99ae"/><stop offset="100%" stop-color="#3b4a5c"/></linearGradient>
+      <radialGradient id="rb3Hl" cx="0.28" cy="0.18" r="0.32"><stop offset="0" stop-color="#fff" stop-opacity="0.38"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    </defs>
+    <ellipse cx="24" cy="44" rx="16" ry="4" fill="rgba(0,0,0,0.21)"/>
+    <!-- Irregular rock variant 3 -->
+    <path d="M8,10 L15,5 L24,3 L34,4 L42,9 L45,18 L44,28 L40,38 L32,43 L22,44 L12,41 L6,32 L4,22 L5,14 Z" fill="url(#rb3L)" stroke="#1e293b" stroke-width="0.6"/>
+    <!-- Top-left bright facet -->
+    <path d="M8,10 L15,5 L24,3 L22,11 L14,12 Z" fill="#dae3ed" opacity="0.5"/>
+    <!-- Top peak facet -->
+    <path d="M24,3 L34,4 L30,10 L24,9 Z" fill="#e8edf2" opacity="0.6"/>
+    <!-- Right facet medium -->
+    <path d="M34,4 L42,9 L45,18 L38,18 L32,12 Z" fill="#7d8a9e" opacity="0.4"/>
+    <!-- Lower right dark -->
+    <path d="M40,38 L32,43 L22,44 L26,36 L35,32 Z" fill="#2d3a4a" opacity="0.5"/>
+    <!-- Left side darker -->
+    <path d="M6,32 L4,22 L5,14 L10,18 L10,28 Z" fill="#43515f" opacity="0.45"/>
+    <!-- Center lighter facet -->
+    <path d="M22,11 L32,12 L38,18 L36,28 L26,32 L16,28 L14,18 Z" fill="#a1aebb" opacity="0.32"/>
+    <!-- Highlight overlay -->
+    <ellipse cx="20" cy="9" rx="8" ry="6" fill="url(#rb3Hl)"/>
+    <!-- Crack at upper edge -->
+    <path d="M26,6 L24,9 L27,11" fill="none" stroke="#1a202c" stroke-width="1.6" opacity="0.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M26,6 L24,9 L27,11" fill="none" stroke="#b8c5d6" stroke-width="0.6" opacity="0.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Natural spots -->
+    <ellipse cx="16" cy="20" rx="0.9" ry="1.2" fill="#3b4a5c" opacity="0.3"/>
+    <circle cx="30" cy="22" r="0.7" fill="#475569" opacity="0.25"/>
+    <ellipse cx="10" cy="26" rx="0.8" ry="0.6" fill="#334155" opacity="0.28"/>
+    <circle cx="36" cy="30" r="0.6" fill="#2d3748" opacity="0.24"/>
+  </svg>`
+}
+
+function crateSvg(){
+  return `<svg viewBox="0 0 48 48" width="90%" height="90%" class="anim-crate">
+    <defs>
+      <linearGradient id="crFrame" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a4a3a"/><stop offset="50%" stop-color="#3d3226"/><stop offset="100%" stop-color="#2a1f18"/></linearGradient>
+      <radialGradient id="crWood" cx="0.5" cy="0.4" r="0.6"><stop offset="0" stop-color="#e59a56"/><stop offset="50%" stop-color="#c97838"/><stop offset="100%" stop-color="#9d5a2a"/></radialGradient>
+      <linearGradient id="crBrass" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffd966"/><stop offset="50%" stop-color="#d4a942"/><stop offset="100%" stop-color="#b8932f"/></linearGradient>
+      <radialGradient id="crShine" cx="0.35" cy="0.25" r="0.5"><stop offset="0" stop-color="#fff" stop-opacity="0.2"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    </defs>
+    
+    <!-- Shadow -->
+    <ellipse cx="24" cy="45" rx="14" ry="3" fill="rgba(0,0,0,0.22)"/>
+    
+    <!-- Body outer frame (straight sides, rectangular) -->
+    <rect x="8" y="23" width="32" height="18" rx="2" fill="url(#crFrame)" stroke="#1a1410" stroke-width="0.5"/>
+    
+    <!-- Body inner wood (straight sides, rectangular) -->
+    <rect x="10" y="24" width="28" height="16" rx="1.5" fill="url(#crWood)" stroke="#7a4b1e" stroke-width="0.3"/>
+    
+    <!-- Wood grain on body -->
+    <path d="M14,25 L14,39" stroke="#8b5a2a" stroke-width="0.3" opacity="0.2"/>
+    <path d="M20,25 L20,39" stroke="#8b5a2a" stroke-width="0.25" opacity="0.15"/>
+    <path d="M28,25 L28,39" stroke="#8b5a2a" stroke-width="0.25" opacity="0.15"/>
+    <path d="M34,25 L34,39" stroke="#8b5a2a" stroke-width="0.3" opacity="0.2"/>
+    
+    <!-- Left vertical brass band -->
+    <rect x="11" y="25" width="2.2" height="14" rx="0.5" fill="url(#crBrass)" stroke="#8b6914" stroke-width="0.25"/>
+    <circle cx="12.1" cy="28" r="0.55" fill="#6b4e12"/>
+    <circle cx="12.1" cy="36" r="0.55" fill="#6b4e12"/>
+    
+    <!-- Right vertical brass band -->
+    <rect x="34.8" y="25" width="2.2" height="14" rx="0.5" fill="url(#crBrass)" stroke="#8b6914" stroke-width="0.25"/>
+    <circle cx="35.9" cy="28" r="0.55" fill="#6b4e12"/>
+    <circle cx="35.9" cy="36" r="0.55" fill="#6b4e12"/>
+    
+    <!-- Top horizontal brass band (just below lid junction) -->
+    <rect x="12" y="25" width="24" height="1.8" rx="0.4" fill="url(#crBrass)" stroke="#8b6914" stroke-width="0.25"/>
+    <circle cx="17" cy="26" r="0.45" fill="#6b4e12"/>
+    <circle cx="24" cy="26" r="0.45" fill="#6b4e12"/>
+    <circle cx="31" cy="26" r="0.45" fill="#6b4e12"/>
+    
+    <!-- Bottom horizontal brass band -->
+    <rect x="12" y="37" width="24" height="2" rx="0.5" fill="url(#crBrass)" stroke="#8b6914" stroke-width="0.25"/>
+    <circle cx="17" cy="38" r="0.5" fill="#6b4e12"/>
+    <circle cx="24" cy="38" r="0.5" fill="#6b4e12"/>
+    <circle cx="31" cy="38" r="0.5" fill="#6b4e12"/>
+    
+    <!-- Feet at corners -->
+    <rect x="9" y="40" width="3" height="2.5" rx="0.5" fill="#5a3a1a" stroke="#2a1f18" stroke-width="0.3"/>
+    <rect x="36" y="40" width="3" height="2.5" rx="0.5" fill="#5a3a1a" stroke="#2a1f18" stroke-width="0.3"/>
+    
+    <!-- BIG Red ? mark in the MIDDLE of body (belly of chest) -->
+    <g transform="translate(24,32)">
+      <!-- Shadow -->
+      <path d="M-3.2,-3 Q-3.2,-6.5 0,-6.5 Q3.2,-6.5 3.2,-3 Q3.2,-0.8 1.5,0.8 L-1.5,0.8 L-1.5,2.5 L1.5,2.5 L1.5,1.3 Q3.7,0.5 4.8,-1.2 Q5.8,-3 5.2,-5.2 Q4.5,-8 0,-8 Q-4.5,-8 -5.2,-5.2 Q-5.8,-3 -5.2,-1.2" fill="rgba(0,0,0,0.35)" transform="translate(0.4,0.4)"/>
+      <!-- Main ? (40-50% bigger) -->
+      <path d="M-3.2,-3 Q-3.2,-6.5 0,-6.5 Q3.2,-6.5 3.2,-3 Q3.2,-0.8 1.5,0.8 L-1.5,0.8 L-1.5,2.5 L1.5,2.5 L1.5,1.3 Q3.7,0.5 4.8,-1.2 Q5.8,-3 5.2,-5.2 Q4.5,-8 0,-8 Q-4.5,-8 -5.2,-5.2 Q-5.8,-3 -5.2,-1.2" fill="#ef4444" stroke="#dc2626" stroke-width="0.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="0" cy="4.2" r="0.9" fill="#ef4444"/>
+    </g>
+    
+    <!-- Arched lid outer frame (straight sides, low curved top) -->
+    <path d="M8,23 L8,13 Q8,10 12,8 L24,8 L36,8 Q40,10 40,13 L40,23 Z" fill="url(#crFrame)" stroke="#1a1410" stroke-width="0.5"/>
+    
+    <!-- Arched lid inner wood (straight sides, low curved top) -->
+    <path d="M10,23 L10,13.5 Q10,11 13,9.5 L24,9.5 L35,9.5 Q38,11 38,13.5 L38,23 Z" fill="url(#crWood)" stroke="#7a4b1e" stroke-width="0.3"/>
+    
+    <!-- Lid wood grain -->
+    <path d="M14,14 L14,22" stroke="#8b5a2a" stroke-width="0.3" opacity="0.2"/>
+    <path d="M20,12 L20,22" stroke="#8b5a2a" stroke-width="0.25" opacity="0.15"/>
+    <path d="M28,12 L28,22" stroke="#8b5a2a" stroke-width="0.25" opacity="0.15"/>
+    <path d="M34,14 L34,22" stroke="#8b5a2a" stroke-width="0.3" opacity="0.2"/>
+    
+    <!-- Lid horizontal brass band at junction -->
+    <rect x="10" y="22" width="28" height="2" rx="0.5" fill="url(#crBrass)" stroke="#8b6914" stroke-width="0.25"/>
+    <circle cx="14" cy="23" r="0.5" fill="#6b4e12"/>
+    <circle cx="24" cy="23" r="0.5" fill="#6b4e12"/>
+    <circle cx="34" cy="23" r="0.5" fill="#6b4e12"/>
+    
+    <!-- Hinges on sides -->
+    <rect x="7" y="20" width="3.5" height="4" rx="0.7" fill="url(#crBrass)" stroke="#8b6914" stroke-width="0.3"/>
+    <circle cx="8.8" cy="22" r="0.6" fill="#5a3a1a"/>
+    <rect x="37.5" y="20" width="3.5" height="4" rx="0.7" fill="url(#crBrass)" stroke="#8b6914" stroke-width="0.3"/>
+    <circle cx="39.2" cy="22" r="0.6" fill="#5a3a1a"/>
+    
+    <!-- Shine overlay on lid -->
+    <ellipse cx="22" cy="14" rx="9" ry="5" fill="url(#crShine)"/>
+  </svg>`
+}
+
+function trophySvg(){
+  return `<svg viewBox="0 0 48 48" width="78%" height="78%">
+    <defs>
+      <linearGradient id="cupGold" x1="0.1" y1="0" x2="0.9" y2="1"><stop offset="0" stop-color="#fff9d6"/><stop offset="12%" stop-color="#fde047"/><stop offset="35%" stop-color="#fbbf24"/><stop offset="55%" stop-color="#f59e0b"/><stop offset="75%" stop-color="#d97706"/><stop offset="100%" stop-color="#92400e"/></linearGradient>
+      <linearGradient id="cupGoldR" x1="0.9" y1="0" x2="0.1" y2="1"><stop offset="0" stop-color="#fff9d6"/><stop offset="12%" stop-color="#fde047"/><stop offset="35%" stop-color="#fbbf24"/><stop offset="55%" stop-color="#f59e0b"/><stop offset="75%" stop-color="#d97706"/><stop offset="100%" stop-color="#92400e"/></linearGradient>
+      <linearGradient id="cupPed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fde047"/><stop offset="30%" stop-color="#eab308"/><stop offset="70%" stop-color="#d97706"/><stop offset="100%" stop-color="#78350f"/></linearGradient>
+      <radialGradient id="cupSh" cx="0.3" cy="0.2" r="0.55"><stop offset="0" stop-color="white" stop-opacity="0.5"/><stop offset="40%" stop-color="white" stop-opacity="0.1"/><stop offset="100%" stop-color="white" stop-opacity="0"/></radialGradient>
+      <linearGradient id="cupEdge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fde047"/><stop offset="100%" stop-color="#92400e"/></linearGradient>
+    </defs>
+    <ellipse cx="24" cy="46" rx="14" ry="2.5" fill="rgba(0,0,0,0.18)"/>
+    <!-- Base tiers -->
+    <path d="M11,43 L37,43 L35,47 L13,47 Z" fill="url(#cupPed)" stroke="#78350f" stroke-width="0.3"/>
+    <path d="M13,40 L35,40 L34,44 L14,44 Z" fill="url(#cupPed)" stroke="#78350f" stroke-width="0.3"/>
+    <path d="M16,37 L32,37 L31,40 L17,40 Z" fill="url(#cupPed)" stroke="#78350f" stroke-width="0.3"/>
+    <path d="M11,43 L13,44 L14,44 L16,43 Q15,44.5 13.5,45 Q12,44.5 11,43" fill="#d97706" opacity="0.4"/>
+    <path d="M35,43 L34,44 L32,44 L37,43 Q36,44.5 34.5,45 Q33,44.5 35,43" fill="#d97706" opacity="0.4"/>
+    <!-- Stem -->
+    <rect x="20" y="32" width="8" height="6" rx="1.5" fill="url(#cupGold)" stroke="#b45309" stroke-width="0.3"/>
+    <rect x="21" y="33" width="6" height="4" rx="1" fill="#fbbf24" opacity="0.4"/>
+    <!-- Cup body -->
+    <path d="M14,8 L34,8 L32,28 L16,28 Z" fill="url(#cupGold)" stroke="#b45309" stroke-width="0.5"/>
+    <!-- Mouth rim decorative band -->
+    <path d="M13.5,8 L34.5,8 L35,12 L13,12 Z" fill="url(#cupEdge)" opacity="0.5"/>
+    <path d="M13.5,10 L34.5,10" stroke="#b45309" stroke-width="0.4" opacity="0.4"/>
+    <!-- Bottom band decoration -->
+    <path d="M16,26 L32,26 L31.5,28 L16.5,28 Z" fill="url(#cupEdge)" opacity="0.4"/>
+    <!-- Engraved diamond pattern -->
+    <path d="M18,14 L20,16 L18,18" fill="none" stroke="#78350f" stroke-width="0.5" opacity="0.35"/>
+    <path d="M22,14 L24,16 L22,18" fill="none" stroke="#78350f" stroke-width="0.5" opacity="0.35"/>
+    <path d="M26,14 L28,16 L26,18" fill="none" stroke="#78350f" stroke-width="0.5" opacity="0.35"/>
+    <path d="M30,14 L32,16 L30,18" fill="none" stroke="#78350f" stroke-width="0.5" opacity="0.35"/>
+    <path d="M20,14 L24,14 L24,18 L20,18 Z" fill="none" stroke="#78350f" stroke-width="0.3" opacity="0.2"/>
+    <path d="M24,14 L28,14 L28,18 L24,18 Z" fill="none" stroke="#78350f" stroke-width="0.3" opacity="0.2"/>
+    <!-- Central engraved star -->
+    <path d="M24,19 L24.8,21.2 L27,21.2 L25.2,22.6 L25.8,24.8 L24,23.4 L22.2,24.8 L22.8,22.6 L21,21.2 L23.2,21.2 Z" fill="#78350f" opacity="0.3"/>
+    <!-- Left handle -->
+    <path d="M14,8 Q4,10 6,22 Q8,28 16,26" fill="none" stroke="url(#cupGold)" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M14,8 Q4,10 6,22 Q8,28 16,26" fill="none" stroke="url(#cupGoldR)" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+    <path d="M14,8 Q4,10 6,22 Q8,28 16,26" fill="none" stroke="#b45309" stroke-width="0.5" stroke-linecap="round" opacity="0.3"/>
+    <!-- Right handle -->
+    <path d="M34,8 Q44,10 42,22 Q40,28 32,26" fill="none" stroke="url(#cupGold)" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M34,8 Q44,10 42,22 Q40,28 32,26" fill="none" stroke="url(#cupGoldR)" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+    <path d="M34,8 Q44,10 42,22 Q40,28 32,26" fill="none" stroke="#b45309" stroke-width="0.5" stroke-linecap="round" opacity="0.3"/>
+    <!-- Bottom curve -->
+    <path d="M16,28 Q24,34 32,28" fill="url(#cupPed)" stroke="#b45309" stroke-width="0.4"/>
+    <!-- Shine overlay -->
+    <path d="M14,8 L34,8 L32,28 L16,28 Z" fill="url(#cupSh)"/>
+    <!-- Specular highlight edge -->
+    <path d="M17,10 L19,10 L18,26 L16.5,26" fill="white" opacity="0.12"/>
+    <!-- Sparkles -->
+    <circle cx="17" cy="12" r="0.8" fill="#fff" opacity="0.6"/>
+    <circle cx="31" cy="12" r="0.8" fill="#fff" opacity="0.6"/>
+    <circle cx="24" cy="5" r="0.8" fill="#fff" opacity="0.4"/>
+    <circle cx="20" cy="6" r="0.5" fill="#fff" opacity="0.3"/>
+    <circle cx="28" cy="6" r="0.5" fill="#fff" opacity="0.3"/>
+  </svg>`
+}
+
+function setCharAnim(dir){
+  const svg=document.getElementById('playerChar');if(!svg)return;
+  svg.classList.remove('anim-idle','anim-walk');
+  if(dir==='idle')svg.classList.add('anim-idle');
+  else svg.classList.add('anim-walk');
+  const lArm=document.getElementById('charLArm'),rArm=document.getElementById('charRArm');
+  const lLeg=document.getElementById('charLLeg'),rLeg=document.getElementById('charRLeg');
+  if(!lArm)return;
+  const reset=()=>{lArm.setAttribute('transform','');rArm.setAttribute('transform','');lLeg.setAttribute('transform','');rLeg.setAttribute('transform','');svg.style.transform=''};
+  reset();
+  if(dir==='left')svg.style.transform='scaleX(-1)';
+  else if(dir==='right')svg.style.transform='';
+  if(dir==='up'||dir==='down'||dir==='left'||dir==='right'){
+    lArm.setAttribute('transform','rotate(-15,15,28)');rArm.setAttribute('transform','rotate(15,33,28)');
+    lLeg.setAttribute('transform','rotate(10,21,41)');rLeg.setAttribute('transform','rotate(-10,27,41)')
+  }
+  clearTimeout(G.charAnimTimeout);
+  G.charAnimTimeout=setTimeout(()=>{svg.classList.add('anim-idle');reset()},400)
+}
+
+// ========== PLAYER MOVEMENT ==========
+function movePlayer(dr,dc){
+  if(G.phase==='won'||G.phase==='finished')return;
+  if(!G.myPlayerId)return;
+  if(G.currentCell||G.questionMinimized){toast('⏳ Đang xử lý câu hỏi...');return}
+  const nr=G.pos.r+dr,nc=G.pos.c+dc;
+  if(nr<0||nr>=8||nc<0||nc>=8)return;
+  const cell=G.board[nr][nc];
+  if(cell.type==='wall'){toast('🪨 Không thể đi đường này — bị chặn bởi tảng đá!',2500);return}
+  G.prevPos={...G.pos};G.pos={r:nr,c:nc};G.moveCount++;
+  document.getElementById('moveCount').textContent=G.moveCount;
+  const dir=dr===0?(dc>0?'right':'left'):(dr>0?'down':'up');
+  setCharAnim(dir);
+  renderBoard();syncPlayer();
+  if(cell.type==='finish'){
+    G.lastCupGained=G.cups<999;
+    if(G.lastCupGained)G.cups++;
+    G.totalMoves+=G.moveCount;
+    updatePlayerTotalMoves(G.totalMoves);
+    G.phase='finished';
+    updateCupDisplay();
+    updatePlayerCups(G.cups);
+    saveIdentity();
+    
+    toast(G.lastCupGained?`🏆 Hoàn thành! Nhận 1 cúp! Tổng: ${G.cups}`:`🏆 Hoàn thành! Bạn đã đạt mức cúp tối đa (999)!`,3000);
+    
+    // Show result screen after a brief delay
+    setTimeout(()=>{
+      showResultScreen();
+    },1500);
+    
+    return
+  }
+  if(cell.type==='question'){
+    if(cell.isHelp){
+      G.fiftyFiftyCount++;G.board[nr][nc]={type:'empty',data:null};
+      toast('✂️ Nhận được 50/50!');renderBoard();updateFiftyBtn();updatePlayerFifty(G.fiftyFiftyCount);
+      return
+    }
+    G.currentCell={r:nr,c:nc,cell};
+    cell.data=getFreshQuestion();
+    showLocalQuestion(cell.data)
+  }
+}
+function getFreshQuestion(){
+  // Lọc các câu chưa dùng trong ván này
+  const avail=QUESTIONS.filter((_,i)=>!G.usedQTexts.includes(QUESTIONS[i].q));
+  // Nếu hết câu → reset tracking cho phép dùng lại
+  if(!avail.length){G.usedQTexts=[];return{...QUESTIONS[Math.random()*QUESTIONS.length|0]}}
+  const pick=avail[Math.random()*avail.length|0];
+  G.usedQTexts.push(pick.q);
+  return{...pick}
+}
+function showLocalQuestion(q){
+  G.questionData=q;
+  let ans=[{l:'A',t:q.a},{l:'B',t:q.b},{l:'C',t:q.c},{l:'D',t:q.d}];
+  shuffle(ans);G.questionAnswers=ans;
+  const btns=ans.map(a=>`<button class="w-full bg-gray-700 hover:bg-gray-600 active:bg-red-500 text-sm font-semibold p-3 rounded-lg transition ans-btn" data-label="${a.l}" onclick="localAnswer(this,'${a.l}')">${a.l}. ${a.t}</button>`).join('');
+  showModal('playerModal',`<div class="anim-fade"><div class="text-center mb-3"><span class="inline-block bg-red-500 text-white text-xs font-bold px-4 py-1 rounded-full">❓ CÂU HỎI!</span></div><h3 class="font-bold text-lg mb-3">${q.q}</h3><div class="grid grid-cols-2 gap-2">${btns}</div><div class="text-center mt-3"><button id="modalFiftyBtn" class="text-xs bg-purple-700 hover:bg-purple-600 disabled:opacity-40 px-3 py-1.5 rounded transition" onclick="useFiftyFifty()">✂️ 50/50 (<span id="modalFiftyCount">${G.fiftyFiftyCount}</span>)</button></div></div>`);
+  updateFiftyBtn();
+  // Re-apply 50/50 removals if restoring minimized question
+  if(G.fiftyRemoved.length)setTimeout(applyFiftyRemoved,50)
+}
+function localAnswer(el,label){
+  if(!G.currentCell)return;
+  const qData=G.currentCell.cell.data;if(!qData)return;
+  const correct=label===qData.ans;
+  const btns=document.querySelectorAll('#playerModal .modal-box .ans-btn');
+  btns.forEach(b=>b.disabled=true);
+  if(correct){
+    el.classList.add('bg-green-600');toast('✅ Chính xác!');
+    G.board[G.currentCell.r][G.currentCell.c]={type:'empty',data:null}
+  }else{
+    el.classList.add('bg-red-600');
+    btns.forEach(b=>{
+      if(b.getAttribute('data-label')===qData.ans){
+        b.classList.add('bg-green-600');
+      }
+    });
+    toast('❌ Sai! Đáp án đúng đã được tô sáng. Lùi lại!');
+    G.pos={...G.prevPos}
+  }
+  G.currentCell=null;G.questionMinimized=false;G.questionData=null;G.questionAnswers=null;G.fiftyRemoved=[];closePlayerModal();renderBoard();syncPlayer()
+}
+
+// ========== 50/50 ==========
+function updateFiftyBtn(){
+  const mfb=document.getElementById('modalFiftyCount');
+  if(mfb)mfb.textContent=G.fiftyFiftyCount;
+  const mfBtn=document.getElementById('modalFiftyBtn');
+  if(mfBtn){mfBtn.disabled=G.fiftyFiftyCount<=0;mfBtn.classList.toggle('opacity-40',G.fiftyFiftyCount<=0)}
+}
+function useFiftyFifty(){
+  if(G.fiftyFiftyCount<=0)return;
+  if(!G.currentCell&&!G.questionData){toast('❌ Không có câu hỏi nào!');return}
+  G.fiftyFiftyCount--;updateFiftyBtn();updatePlayerFifty(G.fiftyFiftyCount);
+  if(G.questionData){
+    const q=G.questionData;
+    const wrong=[{l:'A',t:q.a},{l:'B',t:q.b},{l:'C',t:q.c},{l:'D',t:q.d}].filter(a=>a.l!==q.ans);
+    G.fiftyRemoved=shuffle(wrong).slice(0,2).map(r=>r.l);
+    applyFiftyRemoved();
+    toast('✂️ Đã loại 2 đáp án sai!')
+  }
+}
+function applyFiftyRemoved(){
+  document.querySelectorAll('#playerModal .modal-box .ans-btn').forEach(b=>{
+    const lbl=b.getAttribute('data-label');
+    if(G.fiftyRemoved.includes(lbl)){b.innerHTML='<s>---</s>';b.disabled=true;b.classList.add('opacity-30')}
+  });
+}
+
+function updateCupDisplay(){
+  const el=document.getElementById('cupCount');
+  if(el)el.textContent=`${G.cups}`;
+  const mc=document.getElementById('moveCount');
+  if(mc)mc.textContent=G.moveCount;
+}
+
+// ========== FIREBASE SYNC ==========
+function syncPlayer(){
+  if(!G.myPlayerId)return;
+  saveIdentity();
+  const updates={
+    name:G.myPlayerName,playerId:G.myPlayerId,cups:G.cups,fiftyFiftyCount:G.fiftyFiftyCount,
+    online:true,lastActive:firebase.database.ServerValue.TIMESTAMP
+  };
+  DB_PLAYERS.child(G.myPlayerId).update(updates).catch(e=>{})
+}
+function updatePlayerCups(val){
+  G.cups=val;saveIdentity();
+  DB_PLAYERS.child(G.myPlayerId+'/cups').set(val).catch(e=>{});
+  DB_PLAYERS.child(G.myPlayerId+'/lastActive').set(firebase.database.ServerValue.TIMESTAMP).catch(e=>{})
+  DB_PLAYERS.child(G.myPlayerId+'/online').set(true).catch(e=>{})
+}
+function updatePlayerFifty(val){
+  G.fiftyFiftyCount=val;saveIdentity();
+  DB_PLAYERS.child(G.myPlayerId+'/fiftyFiftyCount').set(val).catch(e=>{})
+}
+function updatePlayerTotalMoves(val){
+  G.totalMoves=val;saveIdentity();
+  DB_PLAYERS.child(G.myPlayerId+'/totalMoves').set(val).catch(e=>{})
+}
+
+// ========== LEADERBOARD + RANKING ==========
+let _lbOff=null;
+function listenLeaderboard(){
+  if(_lbOff)_lbOff();
+  _lbOff=DB_PLAYERS.on('value',snap=>{
+    const data=snap.val()||{};
+    const players=Object.values(data).filter(Boolean).map(p=>({...p}));
+    G.leaderboardData=players.sort((a,b)=>{
+      const cupDiff=(b.cups||0)-(a.cups||0);
+      if(cupDiff!==0)return cupDiff;
+      return (a.totalMoves||0)-(b.totalMoves||0); // bằng cúp thì ít bước hơn xếp trên
+    });
+    renderAllRankings();
+  },e=>{
+    G.leaderboardData=[];
+    renderAllRankings();
+  })
+}
+
+function renderAllRankings(){
+  renderRankingScreen();
+  updateMiniRank();
+}
+
+function renderRankingScreen(){
+  renderPodium();renderRankingList();renderMyRank();
+  // Update back button label based on origin
+  const btn=document.getElementById('rankingBackBtn');
+  if(btn){
+    if(G.rankingFrom==='landing')btn.textContent='← Quay lại';
+    else if(G.rankingFrom==='result')btn.textContent='← Quay lại kết quả';
+    else btn.textContent='← Quay lại chơi';
+  }
+}
+function renderPodium(){
+  const el=document.getElementById('podium');if(!el)return;
+  const top=G.leaderboardData.slice(0,3);
+  if(!top.length){el.innerHTML='';return}
+  const order=[1,0,2]; // 2nd, 1st, 3rd
+  el.innerHTML=order.map(i=>{
+    const p=top[i];if(!p)return'';
+    const isMe=p.playerId===G.myPlayerId;
+    const heights=[28,36,24];const medals=['🥈','🥇','🥉'];
+    const colors=['bg-gray-600','bg-yellow-500','bg-amber-700'];
+    return `<div class="flex flex-col items-center gap-1 flex-1">
+      <div class="text-xl">${medals[i]}</div>
+      <div class="w-full ${colors[i]} rounded-t-lg flex flex-col items-center justify-end pb-1.5 pt-2 ${isMe?'ring-2 ring-yellow-300':''}" style="height:${heights[i]}px">
+        <div class="flex items-center gap-1">
+          <span class="text-[10px] font-bold text-white truncate max-w-[60px] text-center leading-tight">${p.name||'Ẩn danh'}</span>
+          <span class="text-[9px] text-white/80">🏆${p.cups||0}</span>
+        </div>
+        <span class="text-[8px] text-white/60">🚶 ${p.totalMoves||0} bước</span>
+      </div>
+    </div>`
+  }).join('')
+}
+function renderRankingList(){
+  const el=document.getElementById('rankingList');if(!el)return;
+  if(!G.leaderboardData.length){el.innerHTML='<div class="text-xs text-gray-600 py-8 text-center">Chưa có người chơi</div>';return}
+  el.innerHTML=G.leaderboardData.map((p,i)=>{
+    const isMe=p.playerId===G.myPlayerId;
+    const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`;
+    return `<div class="flex items-center gap-2 ${isMe?'bg-yellow-400/10 border border-yellow-400/30 rounded-lg':'border-b border-gray-800'} px-3 py-2">
+      <span class="w-7 text-center text-xs font-bold ${isMe?'text-yellow-400':i<3?'':'text-gray-500'}">${medal}</span>
+      <span class="flex-1 text-sm ${isMe?'text-yellow-300 font-bold':'text-gray-300'}">${p.name||'Ẩn danh'}</span>
+      <span class="text-[10px] text-gray-500 mr-1">🚶${p.totalMoves||0}</span>
+      <span class="text-xs font-bold ${isMe?'text-yellow-300':'text-yellow-400'}">🏆 ${p.cups||0}</span>
+    </div>`
+  }).join('')
+}
+function renderMyRank(){
+  const el=document.getElementById('rankingMyRow');if(!el)return;
+  const idx=G.leaderboardData.findIndex(p=>p.playerId===G.myPlayerId);
+  if(idx>=0)el.textContent=`Hạng của bạn: #${idx+1} trong số ${G.leaderboardData.length} người chơi — 🏆 ${G.cups} cúp • 🚶 ${G.totalMoves} bước`;
+  else el.textContent=`Bạn hiện chưa có trong bảng xếp hạng. Chơi để leo lên!`
+}
+function updateMiniRank(){
+  const el=document.getElementById('miniRankText');if(!el)return;
+  const idx=G.leaderboardData.findIndex(p=>p.playerId===G.myPlayerId);
+  el.textContent=idx>=0?`#${idx+1}`:'#-'
+}
+
+// ========== SWIPE ==========
+document.addEventListener('DOMContentLoaded',()=>{
+  const vp=document.getElementById('boardViewport');
+  if(!vp)return;
+  vp.addEventListener('touchstart',e=>{
+    if(G.phase==='finished')return;
+    G.touchStart=e.touches[0]
+  });
+  vp.addEventListener('touchend',e=>{
+    if(G.phase==='finished')return;
+    if(!G.touchStart||!e.changedTouches[0])return;
+    const dx=e.changedTouches[0].clientX-G.touchStart.clientX;
+    const dy=e.changedTouches[0].clientY-G.touchStart.clientY;
+    if(Math.abs(dx)<10&&Math.abs(dy)<10)return;
+    if(Math.abs(dx)>Math.abs(dy))movePlayer(0,dx>0?1:-1);
+    else movePlayer(dy>0?1:-1,0);
+    G.touchStart=null
+  })
+});
+
+// ========== KEYBOARD ==========
+document.addEventListener('keydown',e=>{
+  if(G.phase==='won'||G.phase==='finished')return;
+  if(!G.myPlayerId||document.activeElement.tagName==='INPUT')return;
+  const map={'ArrowUp':[-1,0],'ArrowDown':[1,0],'ArrowLeft':[0,-1],'ArrowRight':[0,1]};
+  const dir=map[e.key];if(!dir)return;
+  e.preventDefault();movePlayer(dir[0],dir[1])
+});
+
+document.addEventListener('visibilitychange',()=>{
+  if(!G.myPlayerId)return;
+  if(document.visibilityState==='visible')setPlayerPresence(true);
+  else setPlayerPresence(false);
+});
+window.addEventListener('beforeunload',()=>{
+  if(G.myPlayerId){
+    saveIdentity();
+    setPlayerPresence(false);
+  }
+});
+
+// ========== PLAYER NAME BADGE ==========
+function updateNameBadge(){
+  const el=document.getElementById('playerNameBadge');
+  if(el)el.textContent=G.myPlayerName||'Người chơi'
+}
+
+// ========== LANDING PAGE FUNCTIONS ==========
+function openRankingFromLanding(){
+  G.rankingFrom='landing';
+  showScreen('ranking-screen');
+}
+
+function openRankingFromResult(){
+  G.rankingFrom='result';
+  showScreen('ranking-screen');
+}
+
+function backFromRanking(){
+  if(G.rankingFrom==='landing'){
+    G.rankingFrom='';
+    showScreen('landing-screen');
+  }else if(G.rankingFrom==='result'){
+    G.rankingFrom='';
+    showScreen('result-screen');
+  }else{
+    showScreen('player-screen');
+  }
+}
+
+// ========== PLAY MODAL (Landing → Name Input) ==========
+function openPlayModal(){
+  document.getElementById('playModal').classList.add('active');
+  document.getElementById('playNameInput').value='';
+  document.getElementById('playPassInput').value='';
+  document.getElementById('playNameError').classList.add('hidden');
+  setTimeout(()=>document.getElementById('playNameInput').focus(),100);
+}
+
+function closePlayModal(){
+  document.getElementById('playModal').classList.remove('active');
+}
+
+function submitPlayName(){
+  const input=document.getElementById('playNameInput');
+  const name=input?.value.trim();
+  const passInput=document.getElementById('playPassInput');
+  const password=passInput?.value||'';
+  const errorEl=document.getElementById('playNameError');
+  
+  if(!name){
+    errorEl.textContent='⚠️ Vui lòng nhập tên!';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  
+  if(name.length<2){
+    errorEl.textContent='⚠️ Tên phải có ít nhất 2 ký tự!';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  
+  if(!password||password.length<4){
+    errorEl.textContent='⚠️ Vui lòng nhập mật khẩu (ít nhất 4 ký tự)!';
+    errorEl.classList.remove('hidden');
+    passInput.focus();
+    return;
+  }
+  
+  // Query Firebase for matching name
+  DB_PLAYERS.once('value').then(async snap=>{
+    const data=snap.val();
+    const normalizedName=name.trim();
+    let existingKey=null,existingData=null;
+    
+    if(data){
+      existingKey=Object.keys(data).find(k=>
+        data[k].name && data[k].name.trim()===normalizedName
+      );
+      if(existingKey)existingData=data[existingKey];
+    }
+    
+    if(existingData){
+      // Name exists — verify password
+      const hashed=await hashPassword(password);
+      const storedPw=existingData.password||'';
+      
+      if(storedPw){
+        // Account has a password — must match
+        if(hashed!==storedPw){
+          errorEl.textContent='⚠️ Sai mật khẩu cho tên này!';
+          errorEl.classList.remove('hidden');
+          passInput.value='';
+          passInput.focus();
+          return;
+        }
+      }else{
+        // Legacy account (no password) — set first password now
+        DB_PLAYERS.child(existingKey+'/password').set(hashed).catch(e=>{})
+      }
+      
+      // Password OK — restore account
+      G.myPlayerName=existingData.name;
+      G.myPlayerId=existingData.playerId;
+      G.cups=existingData.cups||0;
+      G.fiftyFiftyCount=existingData.fiftyFiftyCount||0;
+      G.totalMoves=existingData.totalMoves||0;
+      
+      saveIdentity();
+      setPlayerPresence(true);
+      closePlayModal();
+      enterGameDirect();
+      toast(`🎮 Chào mừng trở lại, ${G.myPlayerName}!`,3000);
+    }else{
+      // Name is new — create account (password optional)
+      createNewPlayer(name,password);
+      closePlayModal();
+    }
+  }).catch(()=>{
+    // Firebase error — allow offline play
+    createNewPlayer(name,password);
+    closePlayModal();
+  });
+}
+
+// ========== RESULT SCREEN FUNCTIONS ==========
+function showResultScreen(){
+  // Calculate rank
+  const idx=G.leaderboardData.findIndex(p=>p.playerId===G.myPlayerId);
+  const rank=idx>=0?`#${idx+1}`:'#-';
+  
+  // Update result screen
+  document.getElementById('resultTotalCups').textContent=`${G.cups} 🏆`;
+  document.getElementById('resultCupGained').textContent=G.lastCupGained?'+1 🏆':'+0 🏆 (đã max)';
+  document.getElementById('resultMoveCount').textContent=G.moveCount;
+  document.getElementById('resultRank').textContent=rank;
+  
+  showScreen('result-screen');
+}
+
+function playAgain(){
+  // Reset for new round
+  G.board=generateBoard();
+  G.pos={r:0,c:0};
+  G.prevPos=null;
+  G.moveCount=0;
+  G.currentCell=null;
+  G.phase='playing';
+  G.usedQTexts=[];
+  G.fiftyRemoved=[];
+  
+  // Return to player screen
+  showScreen('player-screen');
+  renderBoard();
+  updateCupDisplay();
+  document.getElementById('moveCount').textContent=G.moveCount;
+  
+  toast('🏁 Ván mới! Cố gắng thu thập thêm cúp!',2500);
+  syncPlayer();
+}
+
+// ========== INIT ==========
+function init(){
+  if(location.protocol==='file:'){
+    document.body.innerHTML=`<div class="min-h-screen flex flex-col items-center justify-center p-6 text-center"><h1 class="text-2xl font-black text-yellow-400 mb-4">⚠️ Cần HTTP server</h1><p class="text-gray-400 text-sm mb-4">Mở terminal và chạy:<br><code class="bg-gray-800 px-3 py-1 rounded text-yellow-400 inline-block mt-2">python -m http.server 8000</code></p><p class="text-gray-500 text-xs">Rồi mở http://localhost:8000</p></div>`;
+    return;
+  }
+  
+  // Start listening to leaderboard immediately (before login)
+  listenLeaderboard();
+  
+  // Load saved identity
+  loadIdentity();
+  
+  if(G.myPlayerId){
+    // Has saved session - restore from Firebase
+    DB_PLAYERS.child(G.myPlayerId).once('value').then(snap=>{
+      const d=snap.val();
+      if(d){
+        G.myPlayerName=d.name||G.myPlayerName;
+        G.cups=d.cups||0;
+        G.fiftyFiftyCount=d.fiftyFiftyCount||0;
+        G.totalMoves=d.totalMoves||0;
+        saveIdentity();
+        
+        // Go directly to game
+        enterGameDirect();
+        toast(`🎮 Chào mừng trở lại, ${G.myPlayerName}!`,3000);
+      }else{
+        // Player ID not found in Firebase - show landing
+        G.myPlayerId='';
+        showScreen('landing-screen');
+      }
+    }).catch(()=>{
+      // Firebase error - show landing
+      G.myPlayerId='';
+      showScreen('landing-screen');
+    });
+  }else{
+    // No saved session - show landing page
+    showScreen('landing-screen');
+  }
+}
+
+async function createNewPlayer(name,password){
+  G.myPlayerName=name;
+  G.myPlayerId=pid();
+  G.cups=0;
+  G.fiftyFiftyCount=0;
+  G.totalMoves=0;
+  
+  saveIdentity();
+  
+  // Save password hash to Firebase
+  const pwHash=await hashPassword(password);
+  DB_PLAYERS.child(G.myPlayerId+'/password').set(pwHash).catch(e=>{})
+  
+  enterGameDirect();
+  toast('🎮 Bắt đầu! Dùng phím mũi tên hoặc vuốt để di chuyển.',3000);
+}
+
+function enterGameDirect(){
+  showScreen('player-screen');
+  updateNameBadge();
+  
+  G.board=generateBoard();
+  G.pos={r:0,c:0};
+  G.prevPos=null;
+  G.moveCount=0;
+  G.currentCell=null;
+  G.phase='playing';
+  G.usedQTexts=[];
+  G.fiftyRemoved=[];
+  
+  renderBoard();
+  updateCupDisplay();
+  document.getElementById('moveCount').textContent=G.moveCount;
+  
+  saveIdentity();
+  syncPlayer();
+  setPlayerPresence(true);
+}
+
+// ========== RENAME / SWITCH ACCOUNT ==========
+function confirmRename(){
+  showModal('backConfirmModal', `<div class="text-center">
+    <h3 class="text-yellow-400 font-bold text-lg mb-2">↩️ Quay lại màn hình nhập tên?</h3>
+    <p class="text-gray-400 text-sm mb-5">Tiến trình ván đang chơi sẽ mất, nhưng số cúp hiện tại của tài khoản vẫn được giữ nguyên.</p>
+    <div class="flex gap-2">
+      <button class="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-sm py-2.5 rounded-lg transition" onclick="closeModal('backConfirmModal')">Hủy</button>
+      <button class="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold text-sm py-2.5 rounded-lg transition" onclick="closeModal('backConfirmModal');doConfirmedRename()">Quay lại</button>
+    </div>
+  </div>`);
+}
+
+function doConfirmedRename(){
+  // Reset game state
+  G.board=[];
+  G.pos={r:0,c:0};
+  G.prevPos=null;
+  G.moveCount=0;
+  G.currentCell=null;
+  G.phase='playing';
+  G.usedQTexts=[];
+  G.fiftyRemoved=[];
+  G.questionMinimized=false;
+  G.questionData=null;
+  G.questionAnswers=null;
+  
+  // Clear saved identity so they must re-login
+  clearIdentity();
+  G.myPlayerId='';
+  G.myPlayerName='';
+  G.cups=0;
+  G.fiftyFiftyCount=0;
+  G.totalMoves=0;
+  
+  // Close any open modals
+  closePlayerModal();
+  
+  // Return to landing page
+  showScreen('landing-screen');
+  toast('🔄 Đã thoát. Nhập tên mới để chơi tiếp!',3000);
+}
+
+// OLD FUNCTIONS - kept for compatibility but not used in new flow
+let _pendingName='',_pendingExistingId=null;
+function startPlaying(){
+  // Legacy function - redirects to new flow
+  openPlayModal();
+}
+function acceptExistingName(){
+  // Legacy - not used in new strict unique name flow
+  closeModal('confirmNameModal');
+}
+function rejectExistingName(){
+  // Legacy - not used in new strict unique name flow
+  closeModal('confirmNameModal');
+}
+function enterGame(){
+  // Legacy - redirects to new function
+  enterGameDirect();
+}
+
+// Gameplay V2 is loaded below. The original implementation is retained as a
+// compatibility fallback and as the source of the question bank/account data.
+</script>
+<script src="game-v2.js"></script>
+</body>
+</html>
