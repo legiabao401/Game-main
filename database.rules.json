@@ -1,0 +1,53 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "treasure_hunt_v2": {
+      "players": {
+        "$uid": {
+          ".read": "auth != null && ($uid === auth.uid || data.child('authEmail').val() === auth.token.email)",
+          ".write": "auth != null && ($uid === auth.uid || data.child('authEmail').val() === auth.token.email)",
+          ".validate": "newData.val() == null || (newData.hasChildren(['name', 'playerId', 'authEmail']) && newData.child('playerId').val() === $uid && newData.child('name').isString() && newData.child('name').val().length >= 2 && newData.child('name').val().length <= 20 && newData.child('authEmail').val() === auth.token.email)"
+        }
+      },
+      "leaderboard": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && $uid === auth.uid",
+          ".validate": "newData.val() == null || (newData.hasChildren(['name', 'playerId', 'cups']) && newData.child('playerId').val() === auth.uid && newData.child('name').isString() && newData.child('cups').isNumber())"
+        }
+      },
+      "nameIndex": {
+        ".read": "auth != null",
+        "$nameKey": {
+          ".write": "auth != null && data.exists() && data.child('authEmail').val() === auth.token.email && !newData.exists()"
+        }
+      }
+    },
+    "treasure_party_rooms_v1": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostId').val() === auth.uid && newData.child('players').child(auth.uid).exists()) || (data.exists() && data.child('hostId').val() === auth.uid))",
+        ".validate": "newData.val() == null || (newData.hasChildren(['code', 'hostId', 'status', 'maxPlayers', 'players']) && newData.child('code').val() === $code && newData.child('maxPlayers').val() === 6 && (newData.child('status').val() === 'lobby' || newData.child('status').val() === 'playing' || newData.child('status').val() === 'ceremony'))",
+        "hostId": {
+          ".write": "auth != null && root.child('treasure_party_rooms_v1').child($code).child('players').child(auth.uid).exists() && !root.child('treasure_party_rooms_v1').child($code).child('players').child(data.val()).exists() && newData.val() === auth.uid"
+        },
+        "status": {
+          ".write": "auth != null && root.child('treasure_party_rooms_v1').child($code).child('players').child(auth.uid).exists() && data.val() === 'playing' && newData.val() === 'ceremony'"
+        },
+        "players": {
+          "$uid": {
+            ".write": "auth != null && $uid === auth.uid && root.child('treasure_party_rooms_v1').child($code).child('status').val() === 'lobby'",
+            ".validate": "newData.val() == null || (newData.hasChildren(['name', 'joinedAt']) && newData.child('name').isString() && newData.child('name').val().length >= 2 && newData.child('name').val().length <= 20)"
+          }
+        },
+        "states": {
+          "$uid": {
+            ".write": "auth != null && $uid === auth.uid && root.child('treasure_party_rooms_v1').child($code).child('status').val() === 'playing' && root.child('treasure_party_rooms_v1').child($code).child('players').child(auth.uid).exists()",
+            ".validate": "newData.val() == null || (newData.child('id').val() === $uid && newData.child('round').isNumber() && newData.child('cups').isNumber())"
+          }
+        }
+      }
+    }
+  }
+}
