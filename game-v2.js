@@ -287,7 +287,7 @@ function confirmRestart(){const online=run?.party?.online;openModal(`<h2>${onlin
 function reportSyncFailure(label,e){console.error(`${label}:`,e);const now=Date.now();if(now-lastSyncWarning>5000){lastSyncWarning=now;toast(`⚠️ ${label}. Kiểm tra Internet rồi thử lại.`)}}
 function publicPlayerPayload(){return{name:G.myPlayerName,playerId:G.myPlayerId,cups:G.cups||0,totalMoves:G.totalMoves||0,expeditionGold:profile.bankGold,expeditionWins:profile.stats.wins,lastActive:firebase.database.ServerValue.TIMESTAMP,online:true}}
 function syncCloud(){if(!G?.myPlayerId||AUTH.currentUser?.uid!==G.myPlayerId)return;const payload={...publicPlayerPayload(),authEmail:AUTH.currentUser.email||''};Promise.all([DB_PLAYERS.child(G.myPlayerId).update(payload),DB_LEADERBOARD.child(G.myPlayerId).set(publicPlayerPayload())]).catch(e=>reportSyncFailure('Không thể đồng bộ tài khoản',e))}
-function listenRanks(){DB_LEADERBOARD.on('value',s=>{leaderboard=Object.values(s.val()||{}).filter(Boolean).sort((a,b)=>(b.cups||0)-(a.cups||0)||(b.expeditionGold||0)-(a.expeditionGold||0))},e=>reportSyncFailure('Không tải được bảng xếp hạng',e))}
+function listenRanks(){DB_LEADERBOARD.off('value');DB_LEADERBOARD.on('value',s=>{leaderboard=Object.values(s.val()||{}).filter(Boolean).sort((a,b)=>(b.cups||0)-(a.cups||0)||(b.expeditionGold||0)-(a.expeditionGold||0))},e=>reportSyncFailure('Không tải được bảng xếp hạng',e))}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 function timeoutAfter(ms,label){return new Promise((_,reject)=>setTimeout(()=>reject(new Error(`${label} quá thời gian chờ (${ms/1000}s)`)),ms))}
@@ -366,7 +366,7 @@ async function login(){
 }
 
 function waitForAuthUser(){return new Promise(resolve=>{let settled=false,off=()=>{};const timer=setTimeout(()=>{if(!settled){settled=true;off();resolve(AUTH.currentUser)}},8000);off=AUTH.onAuthStateChanged(user=>{if(!settled){settled=true;clearTimeout(timer);off();resolve(user)}},()=>{if(!settled){settled=true;clearTimeout(timer);resolve(null)}})})}
-async function logout(){try{if(onlineRoom.ref)await leaveOnlineRoom();await AUTH.signOut()}catch(e){reportSyncFailure('Không thể đăng xuất',e)}clearIdentity();localStorage.removeItem(SAVE_KEY);profile=defaultProfile();G.myPlayerId='';G.myPlayerName='';leaderboard=[];loginScreen()}
+async function logout(){DB_LEADERBOARD.off('value');try{if(onlineRoom.ref)await leaveOnlineRoom();await AUTH.signOut()}catch(e){reportSyncFailure('Không thể đăng xuất',e)}clearIdentity();localStorage.removeItem(SAVE_KEY);profile=defaultProfile();G.myPlayerId='';G.myPlayerName='';leaderboard=[];loginScreen()}
 async function init(){
   document.body.className='v2';document.body.innerHTML=appHtml();ensureMissions();loadIdentity();
   window.addEventListener('keydown',e=>{if(modal||!run)return;const map={ArrowUp:[-1,0],w:[-1,0],W:[-1,0],ArrowDown:[1,0],s:[1,0],S:[1,0],ArrowLeft:[0,-1],a:[0,-1],A:[0,-1],ArrowRight:[0,1],d:[0,1],D:[0,1]};if(map[e.key]){e.preventDefault();move(...map[e.key])}});
