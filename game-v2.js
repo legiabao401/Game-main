@@ -84,7 +84,9 @@ function createRun(options={}){
     gold:0,gems:0,keys:0,torch:starter>0?1:0,pickaxe:starter>1?1:0,shield:starter>2?1:0,
     potion:1,compass:0,torchTurns:0,compassTurns:0,pickMode:false,
     combo:0,bestCombo:0,correct:0,wrong:0,steps:0,score:0,explored:0,
-    bossHp:3,bossMax:3,bossDefeated:false,finished:false,started:Date.now(),logs:[],usedQuestions:[],party:null};
+    bossHp:3,bossMax:3,bossDefeated:false,finished:false,started:Date.now(),logs:[],usedQuestions:[],party:null,
+    profileAtStart:JSON.parse(JSON.stringify(profile)),
+    accountAtStart:{cups:G.cups||0,totalMoves:G.totalMoves||0}};
   generateFloor();if(options.roomData?.board)run.board=options.roomData.board.map(row=>row.map(c=>({...c,baseType:c.baseType||c.type})));initParty(options);log(options.online?'Phòng online bắt đầu! Mỗi người có 15 vòng để kiếm cúp.':'Party bắt đầu! Hãy tung xúc xắc và kiếm nhiều cúp nhất sau 15 vòng.','good');renderAll()
 }
 
@@ -119,7 +121,7 @@ function reachableCells(b){const q=[{r:0,c:0}],out=[],seen=new Set(['0,0']);whil
 function appHtml(){return `<div class="v2-shell">
   <header class="v2-top"><div class="v2-top-row"><div><div class="v2-brand">🎲 TREASURE PARTY</div><div class="v2-floor" id="v2Floor"></div></div><div class="v2-stats" id="v2Stats"></div></div></header>
   <main class="v2-main"><section class="v2-card v2-board-card"><div class="v2-toolbar"><div class="v2-objective" id="v2Objective"></div><button class="v2-btn v2-roll" id="v2RollBtn" onclick="V2.rollDice()">🎲 Tung xúc xắc</button><button class="v2-btn" onclick="V2.openHelp()">?</button></div><div class="v2-board" id="v2Board" aria-label="Bản đồ hầm mỏ"></div><div class="v2-dpad" aria-label="Điều khiển di chuyển"><button aria-label="Đi lên" onclick="V2.go(-1,0)">▲</button><button aria-label="Đi sang trái" onclick="V2.go(0,-1)">◀</button><button class="v2-dpad-center" disabled>⛏️</button><button aria-label="Đi sang phải" onclick="V2.go(0,1)">▶</button><button aria-label="Đi xuống" onclick="V2.go(1,0)">▼</button></div><div class="v2-inventory" id="v2Inventory"></div></section>
-  <aside class="v2-side"><section class="v2-card v2-section"><div class="v2-title">🏁 Bảng đấu Party <small id="v2Round"></small></div><div id="v2Party"></div></section><section class="v2-card v2-section"><div class="v2-title">📜 Nhật ký <small id="v2Accuracy"></small></div><div class="v2-log" id="v2Log"></div></section><section class="v2-card v2-section"><div class="v2-title">🎯 Nhiệm vụ ngày <small id="v2Bank"></small></div><div id="v2Missions"></div></section><section class="v2-card v2-section"><div class="v2-title">Trại thám hiểm</div><div class="v2-actions"><button class="v2-btn gold" onclick="V2.openUpgrades()">⬆️ Nâng cấp</button><button class="v2-btn" onclick="V2.openAchievements()">🏅 Thành tích</button><button class="v2-btn" onclick="V2.openRanking()">🏆 Xếp hạng</button><button class="v2-btn" onclick="V2.confirmRestart()">🔄 Ván mới</button></div></section></aside></main></div><div class="v2-toast" id="v2Toast"></div>`}
+  <aside class="v2-side"><section class="v2-card v2-section"><div class="v2-title">🏁 Bảng đấu Party <small id="v2Round"></small></div><div id="v2Party"></div></section><section class="v2-card v2-section"><div class="v2-title">📜 Nhật ký <small id="v2Accuracy"></small></div><div class="v2-log" id="v2Log"></div></section><section class="v2-card v2-section"><div class="v2-title">🎯 Nhiệm vụ ngày <small id="v2Bank"></small></div><div id="v2Missions"></div></section><section class="v2-card v2-section"><div class="v2-title">Trại thám hiểm</div><div class="v2-actions"><button class="v2-btn gold" onclick="V2.openUpgrades()">⬆️ Nâng cấp</button><button class="v2-btn" onclick="V2.openAchievements()">🏅 Thành tích</button><button class="v2-btn" onclick="V2.openRanking()">🏆 Xếp hạng</button><button class="v2-btn danger" onclick="V2.confirmExitGame()">🚪 Thoát trận</button></div></section></aside></main></div><div class="v2-toast" id="v2Toast"></div>`}
 
 const ICONS={start:'🏕️',exit:'🚪',wall:'🪨',question:'📦',monster:'👹',gold:'🪙',gem:'💎',key:'🗝️',trap:'🕳️',torch:'🔥',item:'🎒',secret:'❔',camp:'⛺',merchant:'🧙‍♂️',water:'💧',lava:'🌋',cart:'🛒',portal:'🌀',empty:'',cleared:''};
 function renderAll(){renderTop();renderBoard();renderInventory();renderSide()}
@@ -282,7 +284,31 @@ function openHelp(){
 
 function openModal(html,data={}){clearInterval(questionTimer);closeModal(true);const ov=document.createElement('div');ov.className='v2-overlay';ov.innerHTML=`<div class="v2-modal">${html}</div>`;document.body.appendChild(ov);modal={...data,el:ov}}
 function closeModal(force=false){if(!modal)return;if(modal.locked&&!force)return;const resume=modal.resumeParty&&!force;clearInterval(questionTimer);modal.el?.remove();modal=null;if(resume)setTimeout(finishHumanStep,0)}
-function confirmRestart(){const online=run?.party?.online;openModal(`<h2>${online?'🚪 Rời trận Online?':'🔄 Bắt đầu trận mới?'}</h2><p>${online?'Bạn sẽ rời khỏi phòng và không nhận phần thưởng của trận này.':'Chiến lợi phẩm chưa gửi vào ngân hàng của trận hiện tại sẽ mất.'}</p><div class="v2-actions" style="margin-top:14px"><button class="v2-btn" onclick="V2.closeModal()">Hủy</button><button class="v2-btn primary" onclick="${online?'V2.leaveRoom()':'V2.newRun()'}">${online?'Rời trận':'Bắt đầu lại'}</button></div>`,{type:'confirm'})}
+function confirmExitGame(){openModal(`<h2>🚪 Thoát khỏi trận?</h2><p>Ván hiện tại sẽ bị hủy. Mọi cúp, vàng, tiến độ nhiệm vụ và thành tích phát sinh trong ván này sẽ không được tính.</p><div class="v2-actions" style="margin-top:14px"><button class="v2-btn" onclick="V2.closeModal()">Tiếp tục chơi</button><button class="v2-btn primary" onclick="V2.exitGame()">Thoát trận</button></div>`,{type:'confirmExit'})}
+
+function discardRunProgress(){
+  const snapshot=run?.profileAtStart,account=run?.accountAtStart;
+  if(account){G.cups=account.cups;G.totalMoves=account.totalMoves}
+  if(snapshot){profile=mergeProfile(snapshot);saveProfile()}
+  run=null
+}
+
+async function exitGame(){
+  const isOnline=!!run?.party?.online,ref=onlineRoom.ref,data=onlineRoom.data;
+  cleanupRoomListener();discardRunProgress();
+  if(isOnline&&ref){
+    try{
+      const remaining=Object.keys(data?.players||{}).filter(id=>id!==G.myPlayerId);
+      if(!remaining.length)await ref.remove();
+      else{
+        const updates={[`players/${G.myPlayerId}`]:null,[`states/${G.myPlayerId}`]:null};
+        if(data?.hostId===G.myPlayerId)updates.hostId=remaining[0];
+        await ref.update(updates)
+      }
+    }catch(e){reportSyncFailure('Không thể rời trận sạch sẽ',e)}
+  }
+  onlineRoom={code:'',ref:null,data:null,host:false,listening:false};showModeMenu()
+}
 
 function reportSyncFailure(label,e){console.error(`${label}:`,e);const now=Date.now();if(now-lastSyncWarning>5000){lastSyncWarning=now;toast(`⚠️ ${label}. Kiểm tra Internet rồi thử lại.`)}}
 function publicPlayerPayload(){return{name:G.myPlayerName,playerId:G.myPlayerId,cups:G.cups||0,totalMoves:G.totalMoves||0,expeditionGold:profile.bankGold,expeditionWins:profile.stats.wins,lastActive:firebase.database.ServerValue.TIMESTAMP,online:true}}
@@ -374,6 +400,6 @@ async function init(){
   const user=await waitForAuthUser();if(user){try{const snap=await DB_PLAYERS.child(user.uid).once('value'),player=snap.val();if(player){loadPlayerIntoSession(player,user,player.name);listenRanks();showModeMenu();syncCloud();return}}catch(e){console.warn('Session restore failed:',e)}await AUTH.signOut().catch(()=>{})}G.myPlayerId='';G.myPlayerName='';loginScreen()
 }
 
-window.V2={go:move,rollDice,revealBonus,useItem,claimMission,startQuestion,answer,useFifty,retreat,nextFloor,newRun:()=>{closeModal(true);createRun()},modeMenu:showModeMenu,startBots,createRoom:createOnlineRoom,joinRoom:joinOnlineRoom,copyRoom:copyRoomCode,startOnline:startOnlineRoom,leaveRoom:leaveOnlineRoom,buyRunItem,buyUpgrade,skinAction,openUpgrades,openAchievements,openRanking,openHelp,closeModal,confirmRestart,login,logout};
+window.V2={go:move,rollDice,revealBonus,useItem,claimMission,startQuestion,answer,useFifty,retreat,nextFloor,newRun:()=>{closeModal(true);createRun()},modeMenu:showModeMenu,startBots,createRoom:createOnlineRoom,joinRoom:joinOnlineRoom,copyRoom:copyRoomCode,startOnline:startOnlineRoom,leaveRoom:leaveOnlineRoom,exitGame,buyRunItem,buyUpgrade,skinAction,openUpgrades,openAchievements,openRanking,openHelp,closeModal,confirmExitGame,login,logout};
 init();
 })();
